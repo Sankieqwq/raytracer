@@ -11,6 +11,7 @@ public:
 
     HittableList() {}
     void add(Hittable* o) { objects.push_back(o); }
+    void clear() { objects.clear(); }
 
     bool hit(const Ray& r, double t_min, double t_max,
              HitRecord& rec) const override {
@@ -25,6 +26,19 @@ public:
             }
         }
         return hit_any;
+    }
+
+    bool bounding_box(AABB& output_box) const override {
+        if (objects.empty()) return false;
+
+        AABB tmp_box;
+        bool first_box = true;
+        for (Hittable* o : objects) {
+            if (!o->bounding_box(tmp_box)) return false;
+            output_box = first_box ? tmp_box : AABB::surrounding_box(output_box, tmp_box);
+            first_box = false;
+        }
+        return true;
     }
 };
 

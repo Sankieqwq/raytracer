@@ -3,12 +3,16 @@
 #define RT_SCENE_H
 
 #include "raytracer/scene/json.h"
+#include "raytracer/scene/obj.h"
 #include "raytracer/math/vec3.h"
 #include "raytracer/render/camera.h"
 #include "raytracer/geometry/hittable.h"
 #include "raytracer/geometry/sphere.h"
 #include "raytracer/geometry/hittable_list.h"
+#include "raytracer/geometry/triangle.h"
+#include "raytracer/geometry/bvh.h"
 #include "raytracer/material/material.h"
+#include <filesystem>
 #include <memory>
 #include <vector>
 #include <string>
@@ -21,7 +25,9 @@ struct Scene {
     std::string output = "out.ppm";
 
     std::unique_ptr<Camera> camera;
-    HittableList world;
+    HittableList primitives;
+    std::unique_ptr<Hittable> world;
+    size_t primitive_count = 0;
 
     std::vector<std::unique_ptr<Material>> materials;
     std::vector<std::unique_ptr<Hittable>> objects;
@@ -53,8 +59,42 @@ inline Material* parse_material(const JsonValue& m, Scene& scene) {
     return ptr;
 }
 
+inline std::string resolve_asset_path(const std::filesystem::path& base_dir,
+                                      const std::string& asset_path) {
+    std::filesystem::path path(asset_path);
+    if (path.is_relative()) path = base_dir / path;
+    return path.lexically_normal().string();
+}
+
+inline Material* ensure_material(const JsonValue& obj, Scene& scene) {
+    if (obj.has("material")) return parse_material(obj.at("material"), scene);
+    JsonValue fallback;
+    fallback.type = JsonValue::Object;
+    JsonValue type;
+    type.type = JsonValue::String;
+    type.strVal = "lambertian";
+    JsonValue albedo;
+    albedo.type = JsonValue::Array;
+    for (double c : {0.7, 0.7, 0.7}) {
+        JsonValue v;
+        v.type = JsonValue::Number;
+        v.numVal = c;
+        albedo.arrVal.push_back(v);
+    }
+    fallback.objVal["type"] = type;
+    fallback.objVal["albedo"] = albedo;
+    return parse_material(fallback, scene);
+}
+
 inline void load_scene(const std::string& path, Scene& scene) {
+    scene.primitives.clear();
+    scene.world.reset();
+    scene.objects.clear();
+    scene.materials.clear();
+    scene.primitive_count = 0;
+
     JsonValue root = parse_json_file(path);
+    std::filesystem::path scene_dir = std::filesystem::absolute(path).parent_path();
 
     if (root.has("image")) {
         const JsonValue& img = root.at("image");
@@ -89,14 +129,39 @@ inline void load_scene(const std::string& path, Scene& scene) {
             if (type == "sphere") {
                 Point3 center = to_vec3(obj.at("center"));
                 double radius = obj.at("radius").numVal;
-                Material* mat = parse_material(obj.at("material"), scene);
+                Material* mat = ensure_material(obj, scene);
                 auto sph = std::make_unique<Sphere>(center, radius, mat);
-                scene.world.add(sph.get());
+                scene.primitives.add(sph.get());
                 scene.objects.push_back(std::move(sph));
+            } else if (type == "mesh") {
+                std::string obj_path = resolve_asset_path(
+                    scene_dir, obj.has("obj") ? obj.at("obj").strVal : obj.at("path").strVal);
+                double scale = obj.has("scale") ? obj.at("scale").numVal : 1.0;
+                Vec3 translate = obj.has("translate") ? to_vec3(obj.at("translate")) : Vec3(0, 0, 0);
+                Material* mat = ensure_material(obj, scene);
+                std::vector<ObjTriangleData> tris = load_obj_triangles(obj_path, scale, translate);
+                for (const ObjTriangleData& tri : tris) {
+                    std::unique_ptr<Triangle> mesh_tri;
+                    if (tri.has_normals) {
+                        mesh_tri = std::make_unique<Triangle>(
+                            tri.v0, tri.v1, tri.v2, tri.n0, tri.n1, tri.n2, mat);
+                    } else {
+                        mesh_tri = std::make_unique<Triangle>(tri.v0, tri.v1, tri.v2, mat);
+                    }
+                    scene.primitives.add(mesh_tri.get());
+                    scene.objects.push_back(std::move(mesh_tri));
+                }
             } else {
                 throw std::runtime_error("Unknown object type: " + type);
             }
         }
+    }
+
+    scene.primitive_count = scene.primitives.objects.size();
+    if (scene.primitives.objects.empty()) {
+        scene.world = std::make_unique<HittableList>(scene.primitives);
+    } else {
+        scene.world = std::make_unique<BVHNode>(scene.primitives.objects);
     }
 }
 

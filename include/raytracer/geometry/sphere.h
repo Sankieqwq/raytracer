@@ -38,6 +38,12 @@ public:
         rec.material = material;
         return true;
     }
+
+    bool bounding_box(AABB& output_box) const override {
+        Vec3 radius_vec(radius, radius, radius);
+        output_box = AABB(center - radius_vec, center + radius_vec);
+        return true;
+    }
 };
 
 #endif

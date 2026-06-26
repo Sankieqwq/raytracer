@@ -1,0 +1,38 @@
+{
+    "image": {
+        "width": 320,
+        "height": 200,
+        "samples": 4,
+        "max_depth": 8,
+        "output": "mark.ppm"
+    },
+    "camera": {
+        "lookfrom": [0, 0.35, 7.5],
+        "lookat": [0, 0.1, 0],
+        "vup": [0, 1, 0],
+        "vfov": 30,
+        "aperture": 0.0,
+        "focus_dist": 7.5
+    },
+    "objects": [
+        {
+            "type": "sphere",
+            "center": [0, -100.9, 0],
+            "radius": 100,
+            "material": {
+                "type": "lambertian",
+                "albedo": [0.7, 0.7, 0.7]
+            }
+        },
+        {
+            "type": "mesh",
+            "obj": "../models/mark.obj",
+            "scale": 0.18,
+            "translate": [-0.462, -0.052, 0.0],
+            "material": {
+                "type": "lambertian",
+                "albedo": [0.75, 0.2, 0.2]
+            }
+        }
+    ]
+}
