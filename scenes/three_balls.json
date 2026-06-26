@@ -1,0 +1,56 @@
+{
+    "image": {
+        "width": 800,
+        "height": 400,
+        "samples": 32,
+        "max_depth": 50,
+        "output": "three_balls.ppm"
+    },
+    "camera": {
+        "lookfrom": [0, 0, 0],
+        "lookat": [0, 0, -1],
+        "vup": [0, 1, 0],
+        "vfov": 60,
+        "aperture": 0.0,
+        "focus_dist": 1.0
+    },
+    "objects": [
+        {
+            "type": "sphere",
+            "center": [0, -100.5, -1],
+            "radius": 100,
+            "material": {
+                "type": "lambertian",
+                "albedo": [0.5, 0.5, 0.5]
+            }
+        },
+        {
+            "type": "sphere",
+            "center": [0, 0, -1],
+            "radius": 0.5,
+            "material": {
+                "type": "lambertian",
+                "albedo": [0.1, 0.2, 0.5]
+            }
+        },
+        {
+            "type": "sphere",
+            "center": [-1, 0, -1],
+            "radius": 0.5,
+            "material": {
+                "type": "dielectric",
+                "ior": 1.5
+            }
+        },
+        {
+            "type": "sphere",
+            "center": [1, 0, -1],
+            "radius": 0.5,
+            "material": {
+                "type": "metal",
+                "albedo": [0.8, 0.6, 0.2],
+                "fuzz": 0.3
+            }
+        }
+    ]
+}

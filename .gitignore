@@ -1,0 +1,12 @@
+# Build
+build/
+./raytracer
+
+# Render output
+*.ppm
+*.png
+
+# IDE
+.vscode/
+.idea/
+.DS_Store

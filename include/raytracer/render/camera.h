@@ -1,0 +1,47 @@
+// Module D: camera -- primary ray generation with FOV + lookat
+#ifndef RT_CAMERA_H
+#define RT_CAMERA_H
+
+#include "raytracer/math/ray.h"
+#include "raytracer/math/util.h"
+#include "raytracer/math/vec3.h"
+
+class Camera {
+public:
+    Camera(Point3 lookfrom, Point3 lookat, Vec3 vup,
+           double vfov_deg, double aspect,
+           double aperture, double focus_dist)
+        : lookfrom_(lookfrom) {
+        double theta = degrees_to_radians(vfov_deg);
+        double h = std::tan(theta / 2);
+        double viewport_h = 2 * h;
+        double viewport_w = aspect * viewport_h;
+
+        Vec3 w = (lookfrom - lookat).normalized();
+        Vec3 u = cross(vup, w).normalized();
+        Vec3 v = cross(w, u);
+
+        origin_ = lookfrom;
+        horizontal_ = focus_dist * viewport_w * u;
+        vertical_   = focus_dist * viewport_h * v;
+        lower_left_ = origin_ - horizontal_/2 - vertical_/2 - focus_dist * w;
+
+        lens_radius_ = aperture / 2;
+        u_ = u; v_ = v;
+    }
+
+    Ray get_ray(double s, double t) const {
+        Vec3 rd = lens_radius_ * random_in_unit_disk();
+        Vec3 offset = u_ * rd.x + v_ * rd.y;
+        Point3 origin = origin_ + offset;
+        Vec3 dir = lower_left_ + s*horizontal_ + t*vertical_ - origin;
+        return Ray(origin, dir);
+    }
+
+private:
+    Point3 lookfrom_, origin_, lower_left_;
+    Vec3 horizontal_, vertical_, u_, v_;
+    double lens_radius_;
+};
+
+#endif
