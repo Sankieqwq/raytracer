@@ -1,0 +1,48 @@
+include/raytracer/geometry/aabb.h
+  s_7d5c4467f84347::t_853c25ca13a18e 1-60
+include/raytracer/geometry/sphere.h
+  s_7d5c4467f84347::t_4dd27c92ebad4a 41-46
+src/main.cpp
+  s_7d5c4467f84347::t_d58a0b6615c446 74,91
+  s_7d5c4467f84347::t_aabc5303161ea8 85,90
+include/raytracer/scene/obj.h
+  s_7d5c4467f84347::t_dc2788549e70fb 1-117
+README.md
+  s_7d5c4467f84347::t_d83b0205f4bfb0 35-37,154-180
+scenes/mark.json
+  s_7d5c4467f84347::t_dccc60e8929182 1-38
+include/raytracer/geometry/triangle.h
+  s_7d5c4467f84347::t_576e4e52a8a604 11-12,15,17-22,48-53
+  s_7d5c4467f84347::t_b39005ccefbaf1 1-10,13-14,16,23-47,54-73
+include/raytracer/geometry/hittable_list.h
+  s_7d5c4467f84347::t_a012de0da18f2c 14,30-41
+include/raytracer/scene/scene.h
+  s_7d5c4467f84347::t_5c2f7c7652cd10 6,12-13,15,28-30,62-88,90-95,97,132,134,136-153,159-164
+include/raytracer/geometry/bvh.h
+  s_7d5c4467f84347::t_5c374ca9240e34 1-123
+include/raytracer/geometry/hittable.h
+  s_7d5c4467f84347::t_37ed6c350611ec 6,28
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "ea0f43ec704f86d626390f48b712f8b0026f71d4",
+  "prompts": {},
+  "humans": {
+    "h_3b718a9e7ee8d4": {
+      "author": "sankarea <3154149040@qq.com>"
+    }
+  },
+  "sessions": {
+    "s_7d5c4467f84347": {
+      "agent_id": {
+        "tool": "trae",
+        "id": "6a3e2ed6f4acf5b98a2d53ce",
+        "model": "gpt-5.4__dev"
+      },
+      "human_author": "sankarea <3154149040@qq.com>"
+    }
+  },
+  "attestation_metadata": {},
+  "remote_transcripts": {}
+}
