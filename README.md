@@ -52,6 +52,19 @@ sips -s format png out.ppm --out out.png
 open out.png
 ```
 
+也可以使用项目自带脚本自动转换：
+
+```bash
+# 默认把 out.ppm 转成 out.png
+./scripts/ppm_to_png.sh
+
+# 指定输入文件，输出名默认同名 .png
+./scripts/ppm_to_png.sh three_balls.ppm
+
+# 同时指定输入和输出
+./scripts/ppm_to_png.sh three_balls.ppm preview.png
+```
+
 ## 场景文件格式
 
 场景用 JSON 描述，包含 `image`、`camera`、`objects` 三部分。见 `scenes/` 目录示例。

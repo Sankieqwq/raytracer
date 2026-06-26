@@ -6,6 +6,9 @@ build/
 *.ppm
 *.png
 
+# executable
+/raytracer
+
 # IDE
 .vscode/
 .idea/
