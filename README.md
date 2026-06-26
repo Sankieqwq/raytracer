@@ -32,6 +32,9 @@ g++ -std=c++17 -O2 -Wall -Wextra -Iinclude -o raytracer src/main.cpp
 
 # 覆盖输出路径和采样数
 ./raytracer --scene scenes/three_balls.json --out my.ppm --samples 64
+
+# 渲染 OBJ 模型场景
+./raytracer --scene scenes/mark.json
 ```
 
 命令行参数：
@@ -50,6 +53,19 @@ PPM 可被多数看图软件直接打开。macOS 下转 PNG：
 ```bash
 sips -s format png out.ppm --out out.png
 open out.png
+```
+
+也可以使用项目自带脚本自动转换：
+
+```bash
+# 默认把 out.ppm 转成 out.png
+./scripts/ppm_to_png.sh
+
+# 指定输入文件，输出名默认同名 .png
+./scripts/ppm_to_png.sh three_balls.ppm
+
+# 同时指定输入和输出
+./scripts/ppm_to_png.sh three_balls.ppm preview.png
 ```
 
 ## 场景文件格式
@@ -135,6 +151,33 @@ open out.png
 |------|------|
 | `scenes/default.json` | 漫反射球 + 地面（基础验证） |
 | `scenes/three_balls.json` | 漫反射 + 玻璃 + 金属 三球场景 |
+| `scenes/mark.json` | 加载 `models/mark.obj` 的网格场景 |
+
+## OBJ 网格支持
+
+当前版本已支持在场景 JSON 中通过 `mesh` 对象加载 Wavefront OBJ 模型，并输出渲染图片。
+当前范围刻意保持最小：
+
+- 支持 `v`、`vn`、`f`
+- 支持三角形、四边形和一般多边形面，内部会自动扇形拆分为三角形
+- 支持 `v` / `v//vn` / `v/vt/vn` 等常见面索引格式
+- 支持 `scale` 和 `translate` 两个基础变换
+- 暂不解析 `mtl`、纹理贴图和旋转变换
+
+示例：
+
+```json
+{
+    "type": "mesh",
+    "obj": "../models/mark.obj",
+    "scale": 0.18,
+    "translate": [-0.462, -0.052, 0.0],
+    "material": {
+        "type": "lambertian",
+        "albedo": [0.75, 0.2, 0.2]
+    }
+}
+```
 
 ## 项目结构
 

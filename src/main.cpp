@@ -71,7 +71,7 @@ int main(int argc, char* argv[]) {
               << "Image: " << scene.width << "x" << scene.height
               << ", samples=" << scene.samples
               << ", depth=" << scene.max_depth << "\n"
-              << "Objects: " << scene.world.objects.size() << "\n";
+              << "Primitives: " << scene.primitive_count << "\n";
 
     std::vector<Color> pixels(scene.width * scene.height);
     int last_pct = -1;
@@ -82,12 +82,13 @@ int main(int argc, char* argv[]) {
             std::cerr << "\rProgress: " << pct << "%" << std::flush;
             last_pct = pct;
         }
+        int sample_row = scene.height - 1 - j;
         for (int i = 0; i < scene.width; i++) {
             Color col(0, 0, 0);
             for (int s = 0; s < scene.samples; s++) {
                 double u = (i + random_double()) / (scene.width - 1);
-                double v = (j + random_double()) / (scene.height - 1);
-                col += ray_color(scene.camera->get_ray(u, v), scene.world, scene.max_depth);
+                double v = (sample_row + random_double()) / (scene.height - 1);
+                col += ray_color(scene.camera->get_ray(u, v), *scene.world, scene.max_depth);
             }
             pixels[j * scene.width + i] = col;
         }

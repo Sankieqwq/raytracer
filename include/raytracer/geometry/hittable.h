@@ -3,6 +3,7 @@
 #define RT_HITTABLE_H
 
 #include "raytracer/math/ray.h"
+#include "raytracer/geometry/aabb.h"
 
 class Material;
 
@@ -24,6 +25,7 @@ public:
     virtual ~Hittable() = default;
     virtual bool hit(const Ray& r, double t_min, double t_max,
                      HitRecord& rec) const = 0;
+    virtual bool bounding_box(AABB& output_box) const = 0;
 };
 
 #endif
