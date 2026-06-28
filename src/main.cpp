@@ -20,10 +20,11 @@ Color ray_color(const Ray& r, const Hittable& world, int depth) {
     HitRecord rec;
     if (world.hit(r, 0.001, infinity, rec)) {
         Ray scattered;
-        Color attenuation;
-        if (rec.material && rec.material->scatter(r, rec, attenuation, scattered))
-            return attenuation * ray_color(scattered, world, depth - 1);
-        return Color(0, 0, 0);
+        Color attenuation, emission;
+        if (rec.material && rec.material->scatter(r, rec, attenuation, scattered, emission)) {
+            return emission + attenuation * ray_color(scattered, world, depth - 1);
+        }
+        return emission;
     }
 
     Vec3 unit_dir = r.direction.normalized();

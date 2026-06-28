@@ -7,7 +7,14 @@
 #include <string>
 #include <stdexcept>
 #include <cmath>
-#include "stb_image.h"
+
+// Forward-declare stb_image functions (implementation in main.cpp via
+// STB_IMAGE_IMPLEMENTATION). Avoids including stb_image.h here, which
+// would cause redefinition of static functions when this header is
+// included in the same TU as the implementation.
+typedef unsigned char stbi_uc;
+extern stbi_uc* stbi_load(const char* filename, int* x, int* y, int* channels_in_file, int desired_channels);
+extern void stbi_image_free(void* retval_from_stbi_load);
 
 enum class TextureType { Solid, Image };
 
