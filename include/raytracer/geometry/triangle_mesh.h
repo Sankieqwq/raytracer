@@ -47,6 +47,23 @@ public:
                 Vec2 uv = b0 * uvs[i0] + b1 * uvs[i1] + b2 * uvs[i2];
                 tmp.u = uv.x;
                 tmp.v = uv.y;
+                // Tangent from UV
+                double du1 = uvs[i1].x - uvs[i0].x;
+                double dv1 = uvs[i1].y - uvs[i0].y;
+                double du2 = uvs[i2].x - uvs[i0].x;
+                double dv2 = uvs[i2].y - uvs[i0].y;
+                double det = du1 * dv2 - du2 * dv1;
+                Vec3 edge1 = vertices[i1] - vertices[i0];
+                Vec3 edge2 = vertices[i2] - vertices[i0];
+                if (std::fabs(det) > 1e-10) {
+                    double inv = 1.0 / det;
+                    tmp.tangent = (inv * (dv2 * edge1 - dv1 * edge2)).normalized();
+                } else {
+                    tmp.tangent = cross(Vec3(0, 1, 0), outward).normalized();
+                    if (tmp.tangent.length_squared() < 1e-10)
+                        tmp.tangent = cross(Vec3(1, 0, 0), outward).normalized();
+                }
+                tmp.has_tangent = true;
             } else {
                 tmp.u = b1;
                 tmp.v = b2;

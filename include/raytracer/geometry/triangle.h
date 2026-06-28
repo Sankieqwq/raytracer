@@ -84,6 +84,25 @@ public:
             rec.u = b1;
             rec.v = b2;
         }
+        // Tangent from UV
+        if (has_uvs) {
+            double du1 = uv1.x - uv0.x;
+            double dv1 = uv1.y - uv0.y;
+            double du2 = uv2.x - uv0.x;
+            double dv2 = uv2.y - uv0.y;
+            double det = du1 * dv2 - du2 * dv1;
+            Vec3 edge1 = v1 - v0;
+            Vec3 edge2 = v2 - v0;
+            if (std::fabs(det) > 1e-10) {
+                double inv = 1.0 / det;
+                rec.tangent = (inv * (dv2 * edge1 - dv1 * edge2)).normalized();
+            } else {
+                rec.tangent = cross(Vec3(0, 1, 0), outward_normal).normalized();
+                if (rec.tangent.length_squared() < 1e-10)
+                    rec.tangent = cross(Vec3(1, 0, 0), outward_normal).normalized();
+            }
+            rec.has_tangent = true;
+        }
         rec.material = material;
         return true;
     }
