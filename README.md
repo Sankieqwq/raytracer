@@ -45,6 +45,9 @@ g++ -std=c++17 -O2 -Wall -Wextra -Iinclude -o raytracer src/main.cpp
 # 覆盖输出路径和采样数
 ./run.sh --scene scenes/three_balls.json --out my.ppm --samples 64
 
+# 高采样渲染时可指定线程数；不指定时默认使用 CPU 硬件线程数
+./run.sh --model models/glb/toyota_mark_ii_jzx100.glb --samples 64 --threads 8 --out car_64.ppm
+
 # 渲染 OBJ 示例场景
 ./run.sh --scene scenes/mark.json
 
@@ -68,6 +71,7 @@ g++ -std=c++17 -O2 -Wall -Wextra -Iinclude -o raytracer src/main.cpp
 | `--obj <path>` | `--model` 的兼容别名 | 未指定时使用场景配置 |
 | `--out <path>` | 输出 PPM 文件（覆盖场景配置） | 场景中的 `output` |
 | `--samples <n>` | 每像素采样数（覆盖场景配置） | 场景中的 `samples` |
+| `--threads <n>` | 渲染线程数，用于高采样加速 | CPU 硬件线程数 |
 | `--direct-only` | 只计算直接光照、阴影和环境光，关闭递归随机反弹以减少噪声 | 关闭 |
 | `--preview` | 快速预览模式：启用 `--direct-only`，且未指定 `--samples` 时使用 1 sample | 关闭 |
 | `--help` | 显示帮助 | — |
