@@ -14,6 +14,7 @@
 #include "raytracer/geometry/triangle_mesh.h"
 #include "raytracer/geometry/bvh.h"
 #include "raytracer/material/material.h"
+#include "raytracer/render/texture.h"
 #include <filesystem>
 #include <iostream>
 #include <memory>
@@ -80,7 +81,47 @@ inline Mat4 parse_transform(const JsonValue& obj) {
     return M;
 }
 
-inline Material* parse_material(const JsonValue& m, Scene& scene) {
+inline Material* parse_material(const JsonValue& m, Scene& scene,
+                                const std::filesystem::path& scene_dir);  // forward decl
+
+inline Material* ensure_material(const JsonValue& obj, Scene& scene,
+                                 const std::filesystem::path& scene_dir);  // forward decl
+
+inline std::string resolve_asset_path(const std::filesystem::path& base_dir,
+                                      const std::string& asset_path) {
+    std::filesystem::path path(asset_path);
+    if (path.is_relative()) path = base_dir / path;
+    return path.lexically_normal().string();
+}
+
+inline Texture parse_texture_color(const JsonValue& m, const std::string& base_key,
+                                    const Color& default_color,
+                                    const std::filesystem::path& scene_dir) {
+    std::string map_key = base_key + "_map";
+    if (m.has(map_key)) {
+        std::string path = resolve_asset_path(scene_dir, m.at(map_key).strVal);
+        return load_image_texture(path);
+    }
+    if (m.has(base_key)) {
+        return Texture(to_vec3(m.at(base_key)));
+    }
+    return Texture(default_color);
+}
+
+inline Texture parse_texture_scalar(const JsonValue& m, const std::string& base_key,
+                                     double default_val,
+                                     const std::filesystem::path& scene_dir) {
+    std::string map_key = base_key + "_map";
+    if (m.has(map_key)) {
+        std::string path = resolve_asset_path(scene_dir, m.at(map_key).strVal);
+        return load_image_texture(path);
+    }
+    double v = m.has(base_key) ? m.at(base_key).numVal : default_val;
+    return Texture(Color(v, 0, 0));
+}
+
+inline Material* parse_material(const JsonValue& m, Scene& scene,
+                                const std::filesystem::path& scene_dir) {
     const std::string& type = m.at("type").strVal;
     std::unique_ptr<Material> mat;
 
@@ -91,6 +132,24 @@ inline Material* parse_material(const JsonValue& m, Scene& scene) {
         mat = std::make_unique<Metal>(to_vec3(m.at("albedo")), fuzz);
     } else if (type == "dielectric") {
         mat = std::make_unique<Dielectric>(m.at("ior").numVal);
+    } else if (type == "pbr") {
+        Texture albedo_tex = parse_texture_color(m, "albedo", Color(0.8, 0.8, 0.8), scene_dir);
+        Texture metallic_tex = parse_texture_scalar(m, "metallic", 0.0, scene_dir);
+        Texture roughness_tex = parse_texture_scalar(m, "roughness", 0.5, scene_dir);
+        double met_def = m.has("metallic") ? m.at("metallic").numVal : 0.0;
+        double rough_def = m.has("roughness") ? m.at("roughness").numVal : 0.5;
+        auto pbr = std::make_unique<PBR>(albedo_tex, met_def, rough_def);
+        pbr->albedo = albedo_tex;
+        pbr->metallic = metallic_tex;
+        pbr->roughness = roughness_tex;
+        if (m.has("normal_map")) {
+            std::string path = resolve_asset_path(scene_dir, m.at("normal_map").strVal);
+            pbr->normal = load_image_texture(path);
+            pbr->has_normal_map = true;
+        }
+        mat = std::move(pbr);
+    } else if (type == "emissive") {
+        mat = std::make_unique<Emissive>(to_vec3(m.at("emission")));
     } else {
         throw std::runtime_error("Unknown material type: " + type);
     }
@@ -100,15 +159,9 @@ inline Material* parse_material(const JsonValue& m, Scene& scene) {
     return ptr;
 }
 
-inline std::string resolve_asset_path(const std::filesystem::path& base_dir,
-                                      const std::string& asset_path) {
-    std::filesystem::path path(asset_path);
-    if (path.is_relative()) path = base_dir / path;
-    return path.lexically_normal().string();
-}
-
-inline Material* ensure_material(const JsonValue& obj, Scene& scene) {
-    if (obj.has("material")) return parse_material(obj.at("material"), scene);
+inline Material* ensure_material(const JsonValue& obj, Scene& scene,
+                                 const std::filesystem::path& scene_dir) {
+    if (obj.has("material")) return parse_material(obj.at("material"), scene, scene_dir);
     JsonValue fallback;
     fallback.type = JsonValue::Object;
     JsonValue type;
@@ -124,7 +177,7 @@ inline Material* ensure_material(const JsonValue& obj, Scene& scene) {
     }
     fallback.objVal["type"] = type;
     fallback.objVal["albedo"] = albedo;
-    return parse_material(fallback, scene);
+    return parse_material(fallback, scene, scene_dir);
 }
 
 inline void load_scene(const std::string& path, Scene& scene) {
@@ -170,7 +223,7 @@ inline void load_scene(const std::string& path, Scene& scene) {
             if (type == "sphere") {
                 Point3 center = to_vec3(obj.at("center"));
                 double radius = obj.at("radius").numVal;
-                Material* mat = ensure_material(obj, scene);
+                Material* mat = ensure_material(obj, scene, scene_dir);
                 auto sph = std::make_unique<Sphere>(center, radius, mat);
                 scene.primitives.add(sph.get());
                 scene.objects.push_back(std::move(sph));
@@ -183,7 +236,7 @@ inline void load_scene(const std::string& path, Scene& scene) {
                 obj_path = resolve_asset_path(scene_dir, obj_path);
 
                 Mat4 transform = parse_transform(obj);
-                Material* mat = ensure_material(obj, scene);
+                Material* mat = ensure_material(obj, scene, scene_dir);
 
                 bool loaded = false;
                 try {
@@ -219,7 +272,7 @@ inline void load_scene(const std::string& path, Scene& scene) {
                 Point3 a = to_vec3(verts.arrVal[0]);
                 Point3 b = to_vec3(verts.arrVal[1]);
                 Point3 c = to_vec3(verts.arrVal[2]);
-                Material* mat = ensure_material(obj, scene);
+                Material* mat = ensure_material(obj, scene, scene_dir);
                 std::unique_ptr<Triangle> tri;
                 if (obj.has("normals") && obj.has("uvs")) {
                     const JsonValue& norms = obj.at("normals");
@@ -256,7 +309,7 @@ inline void load_scene(const std::string& path, Scene& scene) {
                     for (const JsonValue& uv : obj.at("uvs").arrVal)
                         mesh->uvs.push_back(to_vec2(uv));
                 }
-                Material* mat = ensure_material(obj, scene);
+                Material* mat = ensure_material(obj, scene, scene_dir);
                 size_t tri_count = mesh->indices.size() / 3;
                 mesh->material_per_tri.assign(tri_count, mat);
                 scene.primitives.add(mesh.get());
