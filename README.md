@@ -100,7 +100,7 @@ open out.png
 
 ## 场景文件格式
 
-场景用 JSON 描述，包含 `image`、`camera`、`lighting`、`lights`、`objects` 几部分。见 `scenes/` 目录示例。
+场景用 JSON 描述，包含 `image`、`camera`、`lighting`、`lights`、`ground`、`objects` 几部分。见 `scenes/` 目录示例。
 
 ```json
 {
@@ -136,6 +136,13 @@ open out.png
             "intensity": 5.0
         }
     ],
+    "ground": {
+        "enabled": true,
+        "material": {
+            "type": "lambertian",
+            "albedo": [0.62, 0.60, 0.55]
+        }
+    },
     "objects": [
         {
             "type": "sphere",
@@ -186,6 +193,17 @@ open out.png
 | `lights[].intensity` | float | 光源强度；点光源会随距离平方衰减 |
 
 渲染器会对点光源和方向光发射阴影射线，被遮挡的光源不会给当前命中点贡献直接光照。
+
+**ground**（可选；用于自动生成接收阴影的地面）
+
+| 字段 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `enabled` | bool | true | 是否生成地面；只有写了 `ground` 块才会启用 |
+| `size` | float | 根据主体包围盒自动计算 | 地面边长 |
+| `y` | float | 主体包围盒最低点略下方 | 地面高度 |
+| `material` | object | 灰米色漫反射材质 | 地面材质，格式同普通 `material` |
+
+自动地面会加入 BVH 参与求交，因此模型可以把点光源/方向光阴影投到地面上，形成接触阴影。自动相机仍按模型主体包围盒取景，不会被大地面拉远。
 
 **objects**（数组，每个元素是一个物体）
 

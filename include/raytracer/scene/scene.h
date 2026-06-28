@@ -267,6 +267,61 @@ inline void add_mesh_bounds(Scene& scene, const AABB& bounds) {
     scene.has_mesh_bounds = true;
 }
 
+inline Material* make_lambertian_material(Scene& scene, const Color& color) {
+    auto mat = std::make_unique<Lambertian>(color);
+    Material* ptr = mat.get();
+    scene.materials.push_back(std::move(mat));
+    return ptr;
+}
+
+inline void add_auto_ground(const JsonValue& root,
+                            Scene& scene,
+                            const std::filesystem::path& scene_dir) {
+    if (!root.has("ground")) return;
+
+    const JsonValue& ground = root.at("ground");
+    if (ground.has("enabled") && !ground.at("enabled").boolVal) return;
+
+    AABB bounds;
+    if (scene.has_mesh_bounds) {
+        bounds = scene.mesh_bounds;
+    } else if (!scene.primitives.bounding_box(bounds)) {
+        return;
+    } else {
+        scene.mesh_bounds = bounds;
+        scene.has_mesh_bounds = true;
+    }
+
+    double max_extent = bounds.max_extent();
+    if (max_extent <= 1e-8) max_extent = 1.0;
+
+    Point3 center = bounds.center();
+    double half_size = ground.has("size")
+        ? 0.5 * ground.at("size").numVal
+        : std::max(3.0, max_extent * 1.8);
+    double y = ground.has("y")
+        ? ground.at("y").numVal
+        : bounds.minimum.y - std::max(1e-4, max_extent * 0.0005);
+
+    Color default_color(0.62, 0.60, 0.55);
+    Material* mat = ground.has("material")
+        ? parse_material(ground.at("material"), scene, scene_dir)
+        : make_lambertian_material(scene, default_color);
+
+    Point3 p0(center.x - half_size, y, center.z - half_size);
+    Point3 p1(center.x + half_size, y, center.z - half_size);
+    Point3 p2(center.x + half_size, y, center.z + half_size);
+    Point3 p3(center.x - half_size, y, center.z + half_size);
+
+    auto tri_a = std::make_unique<Triangle>(p0, p2, p1, mat);
+    scene.primitives.add(tri_a.get());
+    scene.objects.push_back(std::move(tri_a));
+
+    auto tri_b = std::make_unique<Triangle>(p0, p3, p2, mat);
+    scene.primitives.add(tri_b.get());
+    scene.objects.push_back(std::move(tri_b));
+}
+
 inline Camera make_auto_camera(const AABB& bounds, double aspect, const JsonValue* camera_json) {
     double vfov = 35.0;
     double aperture = 0.0;
@@ -442,6 +497,8 @@ inline void load_scene(const std::string& path,
             }
         }
     }
+
+    add_auto_ground(root, scene, scene_dir);
 
     scene.camera = build_camera(root, scene, aspect);
 
