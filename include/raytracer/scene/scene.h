@@ -21,6 +21,19 @@
 #include <vector>
 #include <string>
 
+enum class LightType {
+    Point,
+    Directional
+};
+
+struct Light {
+    LightType type = LightType::Directional;
+    Point3 position;
+    Vec3 direction = Vec3(0, -1, -1);
+    Color color = Color(1, 1, 1);
+    double intensity = 1.0;
+};
+
 struct Scene {
     int width = 800;
     int height = 400;
@@ -34,6 +47,8 @@ struct Scene {
     size_t primitive_count = 0;
     bool has_mesh_bounds = false;
     AABB mesh_bounds;
+    Color ambient_light = Color(0.04, 0.04, 0.04);
+    std::vector<Light> lights;
 
     std::vector<std::unique_ptr<Material>> materials;
     std::vector<std::unique_ptr<Hittable>> objects;
@@ -94,6 +109,40 @@ inline Material* ensure_material(const JsonValue& obj, Scene& scene) {
     fallback.objVal["type"] = type;
     fallback.objVal["albedo"] = albedo;
     return parse_material(fallback, scene);
+}
+
+inline Light parse_light(const JsonValue& light_json) {
+    Light light;
+    std::string type = light_json.has("type") ? light_json.at("type").strVal : "directional";
+    if (type == "point") {
+        light.type = LightType::Point;
+        light.position = light_json.has("position") ? to_vec3(light_json.at("position")) : Point3(0, 3, 4);
+    } else if (type == "directional") {
+        light.type = LightType::Directional;
+        light.direction = light_json.has("direction") ? to_vec3(light_json.at("direction")) : Vec3(-1, -1, -1);
+    } else {
+        throw std::runtime_error("Unknown light type: " + type);
+    }
+
+    if (light_json.has("color")) light.color = to_vec3(light_json.at("color"));
+    if (light_json.has("intensity")) light.intensity = light_json.at("intensity").numVal;
+    return light;
+}
+
+inline std::vector<Light> default_lights() {
+    Light sun;
+    sun.type = LightType::Directional;
+    sun.direction = Vec3(-1, -1.5, -1).normalized();
+    sun.color = Color(1.0, 0.96, 0.9);
+    sun.intensity = 0.9;
+
+    Light fill;
+    fill.type = LightType::Point;
+    fill.position = Point3(3.0, 4.0, 5.0);
+    fill.color = Color(0.8, 0.9, 1.0);
+    fill.intensity = 5.0;
+
+    return {sun, fill};
 }
 
 inline std::string lower_ext(const std::string& path) {
@@ -214,6 +263,8 @@ inline void load_scene(const std::string& path,
     scene.materials.clear();
     scene.primitive_count = 0;
     scene.has_mesh_bounds = false;
+    scene.ambient_light = Color(0.04, 0.04, 0.04);
+    scene.lights.clear();
 
     JsonValue root = parse_json_file(path);
     std::filesystem::path scene_dir = std::filesystem::absolute(path).parent_path();
@@ -228,6 +279,19 @@ inline void load_scene(const std::string& path,
     }
 
     double aspect = double(scene.width) / scene.height;
+
+    if (root.has("lighting")) {
+        const JsonValue& lighting = root.at("lighting");
+        if (lighting.has("ambient")) scene.ambient_light = to_vec3(lighting.at("ambient"));
+    }
+
+    if (root.has("lights")) {
+        for (const JsonValue& light_json : root.at("lights").arrVal) {
+            scene.lights.push_back(parse_light(light_json));
+        }
+    } else {
+        scene.lights = default_lights();
+    }
 
     if (root.has("objects")) {
         for (const JsonValue& obj : root.at("objects").arrVal) {

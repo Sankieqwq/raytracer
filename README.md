@@ -88,7 +88,7 @@ open out.png
 
 ## 场景文件格式
 
-场景用 JSON 描述，包含 `image`、`camera`、`objects` 三部分。见 `scenes/` 目录示例。
+场景用 JSON 描述，包含 `image`、`camera`、`lighting`、`lights`、`objects` 几部分。见 `scenes/` 目录示例。
 
 ```json
 {
@@ -107,6 +107,23 @@ open out.png
         "aperture": 0.0,
         "focus_dist": 1.0
     },
+    "lighting": {
+        "ambient": [0.05, 0.05, 0.05]
+    },
+    "lights": [
+        {
+            "type": "directional",
+            "direction": [-1, -1.5, -1],
+            "color": [1.0, 0.96, 0.9],
+            "intensity": 0.9
+        },
+        {
+            "type": "point",
+            "position": [3, 4, 5],
+            "color": [0.8, 0.9, 1.0],
+            "intensity": 5.0
+        }
+    ],
     "objects": [
         {
             "type": "sphere",
@@ -144,6 +161,19 @@ open out.png
 | `aperture` | float | 0.0 | 光圈孔径，0 = 无景深 |
 | `focus_dist` | float | 1.0 | 对焦距离 |
 | `auto` | bool | false | 为 true 时根据模型包围盒自动放置相机，可搭配 `vfov` 使用 |
+
+**lighting / lights**（均可选；不写 `lights` 时使用一组默认方向光和点光源）
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `lighting.ambient` | [r,g,b] | 环境光颜色，影响阴影内的最低亮度 |
+| `lights[].type` | string | 支持 `"directional"` 和 `"point"` |
+| `lights[].direction` | [x,y,z] | 方向光方向，表示光线照射方向 |
+| `lights[].position` | [x,y,z] | 点光源位置 |
+| `lights[].color` | [r,g,b] | 光源颜色 |
+| `lights[].intensity` | float | 光源强度；点光源会随距离平方衰减 |
+
+渲染器会对点光源和方向光发射阴影射线，被遮挡的光源不会给当前命中点贡献直接光照。
 
 **objects**（数组，每个元素是一个物体）
 

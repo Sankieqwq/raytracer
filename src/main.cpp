@@ -7,19 +7,59 @@
 #include "raytracer/scene/scene.h"
 #include <vector>
 #include <filesystem>
+#include <cmath>
 #include <iostream>
 #include <string>
 
-Color ray_color(const Ray& r, const Hittable& world, int depth) {
+bool is_shadowed(const Hittable& world, const Ray& shadow_ray, double max_t) {
+    HitRecord shadow_rec;
+    return world.hit(shadow_ray, 0.001, max_t, shadow_rec);
+}
+
+Color direct_lighting(const HitRecord& rec, const Scene& scene) {
+    Color base = rec.material ? rec.material->base_color() : Color(0.8, 0.8, 0.8);
+    Color result = base * scene.ambient_light;
+
+    for (const Light& light : scene.lights) {
+        Vec3 light_dir;
+        double max_t = infinity;
+        double attenuation = 1.0;
+
+        if (light.type == LightType::Point) {
+            Vec3 to_light = light.position - rec.p;
+            double dist2 = to_light.length_squared();
+            if (dist2 <= 1e-8) continue;
+            double dist = std::sqrt(dist2);
+            light_dir = to_light / dist;
+            max_t = dist - 0.001;
+            attenuation = 1.0 / dist2;
+        } else {
+            light_dir = (-light.direction).normalized();
+        }
+
+        double n_dot_l = dot(rec.normal, light_dir);
+        if (n_dot_l <= 0) continue;
+
+        Ray shadow_ray(rec.p + 0.001 * rec.normal, light_dir);
+        if (is_shadowed(*scene.world, shadow_ray, max_t)) continue;
+
+        result += base * light.color * (light.intensity * attenuation * n_dot_l);
+    }
+
+    return result;
+}
+
+Color ray_color(const Ray& r, const Scene& scene, int depth) {
     if (depth <= 0) return Color(0, 0, 0);
 
     HitRecord rec;
-    if (world.hit(r, 0.001, infinity, rec)) {
+    if (scene.world->hit(r, 0.001, infinity, rec)) {
+        Color direct = direct_lighting(rec, scene);
         Ray scattered;
         Color attenuation;
         if (rec.material && rec.material->scatter(r, rec, attenuation, scattered))
-            return attenuation * ray_color(scattered, world, depth - 1);
-        return Color(0, 0, 0);
+            return direct + 0.35 * attenuation * ray_color(scattered, scene, depth - 1);
+        return direct;
     }
 
     Vec3 unit_dir = r.direction.normalized();
@@ -110,7 +150,7 @@ int main(int argc, char* argv[]) {
             for (int s = 0; s < scene.samples; s++) {
                 double u = (i + random_double()) / (scene.width - 1);
                 double v = (sample_row + random_double()) / (scene.height - 1);
-                col += ray_color(scene.camera->get_ray(u, v), *scene.world, scene.max_depth);
+                col += ray_color(scene.camera->get_ray(u, v), scene, scene.max_depth);
             }
             pixels[j * scene.width + i] = col;
         }

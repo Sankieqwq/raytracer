@@ -12,12 +12,15 @@ public:
     virtual ~Material() = default;
     virtual bool scatter(const Ray& r_in, const HitRecord& rec,
                          Color& attenuation, Ray& scattered) const = 0;
+    virtual Color base_color() const { return Color(0.8, 0.8, 0.8); }
 };
 
 class Lambertian : public Material {
 public:
     Color albedo;
     Lambertian(const Color& albedo) : albedo(albedo) {}
+
+    Color base_color() const override { return albedo; }
 
     bool scatter(const Ray& r_in, const HitRecord& rec,
                  Color& attenuation, Ray& scattered) const override {
@@ -37,6 +40,8 @@ public:
     Metal(const Color& albedo, double fuzz = 0)
         : albedo(albedo), fuzz(fuzz < 1 ? fuzz : 1) {}
 
+    Color base_color() const override { return albedo; }
+
     bool scatter(const Ray& r_in, const HitRecord& rec,
                  Color& attenuation, Ray& scattered) const override {
         Vec3 reflected = reflect(r_in.direction.normalized(), rec.normal);
@@ -50,6 +55,8 @@ class Dielectric : public Material {
 public:
     double ior;
     Dielectric(double index_of_refraction) : ior(index_of_refraction) {}
+
+    Color base_color() const override { return Color(1.0, 1.0, 1.0); }
 
     bool scatter(const Ray& r_in, const HitRecord& rec,
                  Color& attenuation, Ray& scattered) const override {
