@@ -5,6 +5,7 @@
 #include "raytracer/scene/json.h"
 #include "raytracer/scene/obj.h"
 #include "raytracer/math/vec3.h"
+#include "raytracer/math/mat4.h"
 #include "raytracer/render/camera.h"
 #include "raytracer/geometry/hittable.h"
 #include "raytracer/geometry/sphere.h"
@@ -14,6 +15,7 @@
 #include "raytracer/geometry/bvh.h"
 #include "raytracer/material/material.h"
 #include <filesystem>
+#include <iostream>
 #include <memory>
 #include <vector>
 #include <string>
@@ -42,6 +44,40 @@ inline Vec3 to_vec3(const JsonValue& arr) {
 
 inline Vec2 to_vec2(const JsonValue& arr) {
     return Vec2(arr.arrVal[0].numVal, arr.arrVal[1].numVal);
+}
+
+inline Mat4 parse_transform(const JsonValue& obj) {
+    Mat4 M = Mat4::identity();
+    if (obj.has("transform")) {
+        const JsonValue& t = obj.at("transform");
+        if (t.has("scale")) {
+            const JsonValue& s = t.at("scale");
+            if (s.isArray() && s.arrVal.size() == 3)
+                M = M * Mat4::scale(s.arrVal[0].numVal, s.arrVal[1].numVal, s.arrVal[2].numVal);
+            else
+                M = M * Mat4::scale(s.numVal, s.numVal, s.numVal);
+        }
+        if (t.has("rotate_axis")) {
+            const JsonValue& ra = t.at("rotate_axis");
+            Vec3 axis = to_vec3(ra.at("axis"));
+            double angle = ra.at("angle").numVal;
+            M = M * Mat4::rotate_axis(axis, angle);
+        }
+        if (t.has("rotate")) {
+            Vec3 r = to_vec3(t.at("rotate"));
+            // XYZ order: apply X first, then Y, then Z  =>  M = M * Rz * Ry * Rx
+            M = M * Mat4::rotate_z(r.z) * Mat4::rotate_y(r.y) * Mat4::rotate_x(r.x);
+        }
+        if (t.has("translate")) {
+            Vec3 tr = to_vec3(t.at("translate"));
+            M = M * Mat4::translate(tr.x, tr.y, tr.z);
+        }
+    } else {
+        double s = obj.has("scale") ? obj.at("scale").numVal : 1.0;
+        Vec3 tr = obj.has("translate") ? to_vec3(obj.at("translate")) : Vec3(0, 0, 0);
+        M = Mat4::translate(tr.x, tr.y, tr.z) * Mat4::scale(s, s, s);
+    }
+    return M;
 }
 
 inline Material* parse_material(const JsonValue& m, Scene& scene) {
@@ -139,22 +175,44 @@ inline void load_scene(const std::string& path, Scene& scene) {
                 scene.primitives.add(sph.get());
                 scene.objects.push_back(std::move(sph));
             } else if (type == "mesh") {
-                std::string obj_path = resolve_asset_path(
-                    scene_dir, obj.has("obj") ? obj.at("obj").strVal : obj.at("path").strVal);
-                double scale = obj.has("scale") ? obj.at("scale").numVal : 1.0;
-                Vec3 translate = obj.has("translate") ? to_vec3(obj.at("translate")) : Vec3(0, 0, 0);
+                std::string obj_path;
+                if (obj.has("file")) obj_path = obj.at("file").strVal;
+                else if (obj.has("obj")) obj_path = obj.at("obj").strVal;
+                else if (obj.has("path")) obj_path = obj.at("path").strVal;
+                else throw std::runtime_error("mesh requires 'file'/'obj'/'path'");
+                obj_path = resolve_asset_path(scene_dir, obj_path);
+
+                Mat4 transform = parse_transform(obj);
                 Material* mat = ensure_material(obj, scene);
-                std::vector<ObjTriangleData> tris = load_obj_triangles(obj_path, scale, translate);
-                for (const ObjTriangleData& tri : tris) {
-                    std::unique_ptr<Triangle> mesh_tri;
-                    if (tri.has_normals) {
-                        mesh_tri = std::make_unique<Triangle>(
-                            tri.v0, tri.v1, tri.v2, tri.n0, tri.n1, tri.n2, mat);
-                    } else {
-                        mesh_tri = std::make_unique<Triangle>(tri.v0, tri.v1, tri.v2, mat);
+
+                bool loaded = false;
+                try {
+                    TriangleMesh mesh = load_obj_mesh(obj_path, transform);
+                    size_t tri_count = mesh.indices.size() / 3;
+                    mesh.material_per_tri.assign(tri_count, mat);
+                    auto mesh_ptr = std::make_unique<TriangleMesh>(std::move(mesh));
+                    scene.primitives.add(mesh_ptr.get());
+                    scene.objects.push_back(std::move(mesh_ptr));
+                    loaded = true;
+                } catch (const std::exception& e) {
+                    std::cerr << "tinyobjloader failed, fallback to legacy parser: "
+                              << e.what() << "\n";
+                }
+                if (!loaded) {
+                    double scale = obj.has("scale") ? obj.at("scale").numVal : 1.0;
+                    Vec3 translate = obj.has("translate") ? to_vec3(obj.at("translate")) : Vec3(0, 0, 0);
+                    std::vector<ObjTriangleData> tris = load_obj_triangles(obj_path, scale, translate);
+                    for (const ObjTriangleData& tri : tris) {
+                        std::unique_ptr<Triangle> mesh_tri;
+                        if (tri.has_normals) {
+                            mesh_tri = std::make_unique<Triangle>(
+                                tri.v0, tri.v1, tri.v2, tri.n0, tri.n1, tri.n2, mat);
+                        } else {
+                            mesh_tri = std::make_unique<Triangle>(tri.v0, tri.v1, tri.v2, mat);
+                        }
+                        scene.primitives.add(mesh_tri.get());
+                        scene.objects.push_back(std::move(mesh_tri));
                     }
-                    scene.primitives.add(mesh_tri.get());
-                    scene.objects.push_back(std::move(mesh_tri));
                 }
             } else if (type == "triangle") {
                 const JsonValue& verts = obj.at("vertices");
