@@ -271,7 +271,7 @@ inline void load_scene(const std::string& path, Scene& scene) {
     if (scene.primitives.objects.empty()) {
         scene.world = std::make_unique<HittableList>(scene.primitives);
     } else {
-        scene.world = std::make_unique<BVHNode>(scene.primitives.objects);
+        scene.world = std::make_unique<LinearBVH>(scene.primitives.objects);
     }
 }
 
