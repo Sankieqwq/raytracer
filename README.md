@@ -107,13 +107,13 @@ open out.png
 
 **image**（均可选，有默认值）
 
-| 字段 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| `width` | int | 800 | 图像宽度 |
-| `height` | int | 400 | 图像高度 |
-| `samples` | int | 16 | 每像素采样数，越大越细腻、越慢 |
-| `max_depth` | int | 32 | 光线递归深度上限 |
-| `output` | string | `"out.ppm"` | 输出文件路径 |
+| 字段　　　　| 类型　 | 默认值　　　| 说明　　　　　　　　　　　　　 |
+| -------------| --------| -------------| --------------------------------|
+| `width`　　 | int　　| 800　　　　 | 图像宽度　　　　　　　　　　　 |
+| `height`　　| int　　| 400　　　　 | 图像高度　　　　　　　　　　　 |
+| `samples`　 | int　　| 16　　　　　| 每像素采样数，越大越细腻、越慢 |
+| `max_depth` | int　　| 32　　　　　| 光线递归深度上限　　　　　　　 |
+| `output`　　| string | `"out.ppm"` | 输出文件路径　　　　　　　　　 |
 
 **camera**（均可选，有默认值）
 
@@ -147,11 +147,12 @@ open out.png
 
 ### 示例场景
 
-| 文件 | 内容 |
-|------|------|
-| `scenes/default.json` | 漫反射球 + 地面（基础验证） |
-| `scenes/three_balls.json` | 漫反射 + 玻璃 + 金属 三球场景 |
-| `scenes/mark.json` | 加载 `models/mark.obj` 的网格场景 |
+| 文件　　　　　　　　　　　| 内容　　　　　　　　　　　　　　　|
+| ---------------------------| -----------------------------------|
+| `scenes/default.json`　　 | 漫反射球 + 地面（基础验证）　　　 |
+| `scenes/three_balls.json` | 漫反射 + 玻璃 + 金属 三球场景　　 |
+| `scenes/mark.json`　　　　| 加载 `models/mark.obj` 的网格场景 |
+| `scenes/triangle_test.json` | 三角形 + 三角网格（验证 UV 插值） |
 
 ## OBJ 网格支持
 
@@ -231,7 +232,7 @@ A 数学库
 
 ## 接口契约（签名冻结，改接口需团队协商）
 
-- `HitRecord` 字段：`p / normal / t / front_face / Material*`
+- `HitRecord` 字段：`p / normal / t / u / v / front_face / Material*`（`u`/`v` 为纹理坐标，阶段 8 新增）
 - `Material*` 生命周期由 `Scene`（`scene.h`）通过 `unique_ptr` 持有，几何体只存裸指针
 - 颜色统一 RGB ∈ [0,1]，输出前由 `image.h` 做伽马 2.2 校正
 - 随机数统一走 `util.h` 的 `random_double()`，避免各写各的
@@ -246,7 +247,8 @@ A 数学库
 - ✅ 阶段 5：抗锯齿（多次采样平均）
 - ✅ 阶段 6：材质系统（Lambert / Metal / Dielectric 全部完成）
 - ✅ 阶段 7：场景文件化（JSON 场景 + 命令行参数）
-- ⬜ 后续：BVH 加速、三角形网格、多线程
+- ✅ 阶段 8：三角形与三角网格求交（Möller–Trumbore + UV 插值 + SoA 网格）
+- ⬜ 后续：BVH 线性化、PBR 材质、CUDA 移植
 
 ## 渲染原理速览
 
