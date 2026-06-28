@@ -12,6 +12,7 @@
 #include "raytracer/geometry/triangle.h"
 #include "raytracer/geometry/bvh.h"
 #include "raytracer/material/material.h"
+#include <cmath>
 #include <filesystem>
 #include <memory>
 #include <vector>
@@ -28,9 +29,15 @@ struct Scene {
     HittableList primitives;
     std::unique_ptr<Hittable> world;
     size_t primitive_count = 0;
+    bool has_mesh_bounds = false;
+    AABB mesh_bounds;
 
     std::vector<std::unique_ptr<Material>> materials;
     std::vector<std::unique_ptr<Hittable>> objects;
+};
+
+struct SceneLoadOptions {
+    std::string obj_override;
 };
 
 inline Vec3 to_vec3(const JsonValue& arr) {
@@ -86,12 +93,88 @@ inline Material* ensure_material(const JsonValue& obj, Scene& scene) {
     return parse_material(fallback, scene);
 }
 
-inline void load_scene(const std::string& path, Scene& scene) {
+inline bool get_bool(const JsonValue& obj, const std::string& key, bool fallback) {
+    return obj.has(key) ? obj.at(key).boolVal : fallback;
+}
+
+inline void add_mesh_bounds(Scene& scene, const AABB& bounds) {
+    scene.mesh_bounds = scene.has_mesh_bounds
+        ? AABB::surrounding_box(scene.mesh_bounds, bounds)
+        : bounds;
+    scene.has_mesh_bounds = true;
+}
+
+inline Camera make_auto_camera(const AABB& bounds, double aspect, const JsonValue* camera_json) {
+    double vfov = 35.0;
+    double aperture = 0.0;
+    Vec3 vup(0, 1, 0);
+
+    if (camera_json) {
+        if (camera_json->has("vfov")) vfov = camera_json->at("vfov").numVal;
+        if (camera_json->has("aperture")) aperture = camera_json->at("aperture").numVal;
+        if (camera_json->has("vup")) vup = to_vec3(camera_json->at("vup"));
+    }
+
+    Point3 center = bounds.center();
+    Vec3 extent = bounds.extent();
+    double fit_height = std::max(extent.y, extent.x / aspect);
+    if (fit_height <= 1e-8) fit_height = 1.0;
+
+    double theta = degrees_to_radians(vfov);
+    double distance = (0.5 * fit_height) / std::tan(theta / 2);
+    distance += 0.5 * extent.z;
+    distance *= 1.35;
+    if (distance < 1.0) distance = 1.0;
+
+    Point3 lookat = center;
+    Point3 lookfrom = center + Vec3(0, 0.12 * bounds.max_extent(), distance);
+
+    if (camera_json) {
+        if (camera_json->has("lookat")) lookat = to_vec3(camera_json->at("lookat"));
+        if (camera_json->has("lookfrom")) lookfrom = to_vec3(camera_json->at("lookfrom"));
+    }
+    double focus_dist = camera_json && camera_json->has("focus_dist")
+        ? camera_json->at("focus_dist").numVal
+        : (lookfrom - lookat).length();
+
+    return Camera(lookfrom, lookat, vup, vfov, aspect, aperture, focus_dist);
+}
+
+inline std::unique_ptr<Camera> build_camera(const JsonValue& root,
+                                            const Scene& scene,
+                                            double aspect) {
+    const JsonValue* camera_json = root.has("camera") ? &root.at("camera") : nullptr;
+    bool auto_camera = !camera_json || get_bool(*camera_json, "auto", false);
+
+    if (auto_camera) {
+        AABB bounds;
+        if (scene.has_mesh_bounds) {
+            bounds = scene.mesh_bounds;
+        } else if (!scene.primitives.bounding_box(bounds)) {
+            bounds = AABB(Point3(-1, -1, -1), Point3(1, 1, 1));
+        }
+        return std::make_unique<Camera>(make_auto_camera(bounds, aspect, camera_json));
+    }
+
+    const JsonValue& c = *camera_json;
+    Point3 lookfrom = to_vec3(c.at("lookfrom"));
+    Point3 lookat   = to_vec3(c.at("lookat"));
+    Vec3   vup      = c.has("vup") ? to_vec3(c.at("vup")) : Vec3(0, 1, 0);
+    double vfov     = c.has("vfov") ? c.at("vfov").numVal : 60.0;
+    double aperture = c.has("aperture") ? c.at("aperture").numVal : 0.0;
+    double focus    = c.has("focus_dist") ? c.at("focus_dist").numVal : (lookfrom - lookat).length();
+    return std::make_unique<Camera>(lookfrom, lookat, vup, vfov, aspect, aperture, focus);
+}
+
+inline void load_scene(const std::string& path,
+                       Scene& scene,
+                       const SceneLoadOptions& options = SceneLoadOptions()) {
     scene.primitives.clear();
     scene.world.reset();
     scene.objects.clear();
     scene.materials.clear();
     scene.primitive_count = 0;
+    scene.has_mesh_bounds = false;
 
     JsonValue root = parse_json_file(path);
     std::filesystem::path scene_dir = std::filesystem::absolute(path).parent_path();
@@ -107,22 +190,6 @@ inline void load_scene(const std::string& path, Scene& scene) {
 
     double aspect = double(scene.width) / scene.height;
 
-    if (root.has("camera")) {
-        const JsonValue& c = root.at("camera");
-        Point3 lookfrom = to_vec3(c.at("lookfrom"));
-        Point3 lookat   = to_vec3(c.at("lookat"));
-        Vec3   vup      = c.has("vup") ? to_vec3(c.at("vup")) : Vec3(0, 1, 0);
-        double vfov     = c.has("vfov") ? c.at("vfov").numVal : 60.0;
-        double aperture = c.has("aperture") ? c.at("aperture").numVal : 0.0;
-        double focus    = c.has("focus_dist") ? c.at("focus_dist").numVal : 1.0;
-        scene.camera = std::make_unique<Camera>(
-            lookfrom, lookat, vup, vfov, aspect, aperture, focus);
-    } else {
-        scene.camera = std::make_unique<Camera>(
-            Point3(0, 0, 0), Point3(0, 0, -1), Vec3(0, 1, 0),
-            60, aspect, 0, 1);
-    }
-
     if (root.has("objects")) {
         for (const JsonValue& obj : root.at("objects").arrVal) {
             const std::string& type = obj.at("type").strVal;
@@ -134,13 +201,40 @@ inline void load_scene(const std::string& path, Scene& scene) {
                 scene.primitives.add(sph.get());
                 scene.objects.push_back(std::move(sph));
             } else if (type == "mesh") {
-                std::string obj_path = resolve_asset_path(
-                    scene_dir, obj.has("obj") ? obj.at("obj").strVal : obj.at("path").strVal);
+                std::string obj_source;
+                if (!options.obj_override.empty()) {
+                    obj_source = options.obj_override;
+                } else if (obj.has("obj")) {
+                    obj_source = obj.at("obj").strVal;
+                } else if (obj.has("path")) {
+                    obj_source = obj.at("path").strVal;
+                } else {
+                    throw std::runtime_error("mesh requires obj/path or --obj override");
+                }
+
+                std::string obj_path = resolve_asset_path(scene_dir, obj_source);
+                Material* mat = ensure_material(obj, scene);
+                ObjMeshData raw_mesh = load_obj_mesh(obj_path);
+
+                bool auto_fit = get_bool(obj, "auto_fit", !(obj.has("scale") || obj.has("translate")));
                 double scale = obj.has("scale") ? obj.at("scale").numVal : 1.0;
                 Vec3 translate = obj.has("translate") ? to_vec3(obj.at("translate")) : Vec3(0, 0, 0);
-                Material* mat = ensure_material(obj, scene);
-                std::vector<ObjTriangleData> tris = load_obj_triangles(obj_path, scale, translate);
-                for (const ObjTriangleData& tri : tris) {
+
+                if (auto_fit) {
+                    double fit_size = obj.has("fit_size") ? obj.at("fit_size").numVal : 3.0;
+                    Point3 fit_center = obj.has("fit_center") ? to_vec3(obj.at("fit_center")) : Point3(0, 0, 0);
+                    double raw_size = raw_mesh.bounds.max_extent();
+                    if (raw_size <= 1e-8) {
+                        throw std::runtime_error("OBJ bounds are too small: " + obj_path);
+                    }
+                    scale *= fit_size / raw_size;
+                    translate = fit_center - scale * raw_mesh.bounds.center() + translate;
+                }
+
+                ObjMeshData mesh = load_obj_mesh(obj_path, scale, translate);
+                add_mesh_bounds(scene, mesh.bounds);
+
+                for (const ObjTriangleData& tri : mesh.triangles) {
                     std::unique_ptr<Triangle> mesh_tri;
                     if (tri.has_normals) {
                         mesh_tri = std::make_unique<Triangle>(
@@ -156,6 +250,8 @@ inline void load_scene(const std::string& path, Scene& scene) {
             }
         }
     }
+
+    scene.camera = build_camera(root, scene, aspect);
 
     scene.primitive_count = scene.primitives.objects.size();
     if (scene.primitives.objects.empty()) {
