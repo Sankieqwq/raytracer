@@ -10,6 +10,7 @@
 #include "raytracer/geometry/sphere.h"
 #include "raytracer/geometry/hittable_list.h"
 #include "raytracer/geometry/triangle.h"
+#include "raytracer/geometry/triangle_mesh.h"
 #include "raytracer/geometry/bvh.h"
 #include "raytracer/material/material.h"
 #include <filesystem>
@@ -37,6 +38,10 @@ inline Vec3 to_vec3(const JsonValue& arr) {
     return Vec3(arr.arrVal[0].numVal,
                 arr.arrVal[1].numVal,
                 arr.arrVal[2].numVal);
+}
+
+inline Vec2 to_vec2(const JsonValue& arr) {
+    return Vec2(arr.arrVal[0].numVal, arr.arrVal[1].numVal);
 }
 
 inline Material* parse_material(const JsonValue& m, Scene& scene) {
@@ -151,6 +156,53 @@ inline void load_scene(const std::string& path, Scene& scene) {
                     scene.primitives.add(mesh_tri.get());
                     scene.objects.push_back(std::move(mesh_tri));
                 }
+            } else if (type == "triangle") {
+                const JsonValue& verts = obj.at("vertices");
+                Point3 a = to_vec3(verts.arrVal[0]);
+                Point3 b = to_vec3(verts.arrVal[1]);
+                Point3 c = to_vec3(verts.arrVal[2]);
+                Material* mat = ensure_material(obj, scene);
+                std::unique_ptr<Triangle> tri;
+                if (obj.has("normals") && obj.has("uvs")) {
+                    const JsonValue& norms = obj.at("normals");
+                    const JsonValue& uvs = obj.at("uvs");
+                    tri = std::make_unique<Triangle>(
+                        a, b, c,
+                        to_vec3(norms.arrVal[0]), to_vec3(norms.arrVal[1]), to_vec3(norms.arrVal[2]),
+                        to_vec2(uvs.arrVal[0]), to_vec2(uvs.arrVal[1]), to_vec2(uvs.arrVal[2]),
+                        mat);
+                } else if (obj.has("normals")) {
+                    const JsonValue& norms = obj.at("normals");
+                    tri = std::make_unique<Triangle>(
+                        a, b, c,
+                        to_vec3(norms.arrVal[0]), to_vec3(norms.arrVal[1]), to_vec3(norms.arrVal[2]),
+                        mat);
+                } else {
+                    tri = std::make_unique<Triangle>(a, b, c, mat);
+                }
+                scene.primitives.add(tri.get());
+                scene.objects.push_back(std::move(tri));
+            } else if (type == "triangles") {
+                auto mesh = std::make_unique<TriangleMesh>();
+                const JsonValue& verts = obj.at("vertices");
+                for (const JsonValue& v : verts.arrVal)
+                    mesh->vertices.push_back(to_vec3(v));
+                const JsonValue& idxs = obj.at("indices");
+                for (const JsonValue& i : idxs.arrVal)
+                    mesh->indices.push_back((int)i.numVal);
+                if (obj.has("normals")) {
+                    for (const JsonValue& n : obj.at("normals").arrVal)
+                        mesh->normals.push_back(to_vec3(n));
+                }
+                if (obj.has("uvs")) {
+                    for (const JsonValue& uv : obj.at("uvs").arrVal)
+                        mesh->uvs.push_back(to_vec2(uv));
+                }
+                Material* mat = ensure_material(obj, scene);
+                size_t tri_count = mesh->indices.size() / 3;
+                mesh->material_per_tri.assign(tri_count, mat);
+                scene.primitives.add(mesh.get());
+                scene.objects.push_back(std::move(mesh));
             } else {
                 throw std::runtime_error("Unknown object type: " + type);
             }
