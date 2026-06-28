@@ -45,12 +45,21 @@ g++ -std=c++17 -O2 -Wall -Wextra -Iinclude -o raytracer src/main.cpp
 # 覆盖输出路径和采样数
 ./run.sh --scene scenes/three_balls.json --out my.ppm --samples 64
 
+# 高采样渲染时可指定线程数；不指定时默认使用 CPU 硬件线程数
+./run.sh --model models/glb/toyota_mark_ii_jzx100.glb --samples 64 --threads 8 --out car_64.ppm
+
 # 渲染 OBJ 示例场景
 ./run.sh --scene scenes/mark.json
 
 # 直接指定 OBJ/GLB 模型，未指定 --scene 时默认使用 scenes/obj.json 作为通用模板
 ./run.sh --model models/obj/mark.obj --out mark.ppm
 ./run.sh --model models/glb/toyota_mark_ii_jzx100.glb --out car.ppm
+
+# 快速清晰预览：关闭随机递归反弹，只保留直接光照和阴影
+./run.sh --preview --model models/glb/toyota_mark_ii_jzx100.glb --out car_preview.ppm
+
+# 也可以保留指定采样数，只关闭递归随机反弹
+./run.sh --direct-only --model models/glb/toyota_mark_ii_jzx100.glb --samples 8 --out car_direct.ppm
 ```
 
 命令行参数：
@@ -62,6 +71,9 @@ g++ -std=c++17 -O2 -Wall -Wextra -Iinclude -o raytracer src/main.cpp
 | `--obj <path>` | `--model` 的兼容别名 | 未指定时使用场景配置 |
 | `--out <path>` | 输出 PPM 文件（覆盖场景配置） | 场景中的 `output` |
 | `--samples <n>` | 每像素采样数（覆盖场景配置） | 场景中的 `samples` |
+| `--threads <n>` | 渲染线程数，用于高采样加速 | CPU 硬件线程数 |
+| `--direct-only` | 只计算直接光照、阴影和环境光，关闭递归随机反弹以减少噪声 | 关闭 |
+| `--preview` | 快速预览模式：启用 `--direct-only`，且未指定 `--samples` 时使用 1 sample | 关闭 |
 | `--help` | 显示帮助 | — |
 
 ### 预览
@@ -88,7 +100,7 @@ open out.png
 
 ## 场景文件格式
 
-场景用 JSON 描述，包含 `image`、`camera`、`objects` 三部分。见 `scenes/` 目录示例。
+场景用 JSON 描述，包含 `image`、`camera`、`lighting`、`lights`、`ground`、`objects` 几部分。见 `scenes/` 目录示例。
 
 ```json
 {
@@ -106,6 +118,30 @@ open out.png
         "vfov": 60,
         "aperture": 0.0,
         "focus_dist": 1.0
+    },
+    "lighting": {
+        "ambient": [0.05, 0.05, 0.05]
+    },
+    "lights": [
+        {
+            "type": "directional",
+            "direction": [-1, -1.5, -1],
+            "color": [1.0, 0.96, 0.9],
+            "intensity": 0.9
+        },
+        {
+            "type": "point",
+            "position": [3, 4, 5],
+            "color": [0.8, 0.9, 1.0],
+            "intensity": 5.0
+        }
+    ],
+    "ground": {
+        "enabled": true,
+        "material": {
+            "type": "lambertian",
+            "albedo": [0.62, 0.60, 0.55]
+        }
     },
     "objects": [
         {
@@ -145,6 +181,30 @@ open out.png
 | `focus_dist` | float | 1.0 | 对焦距离 |
 | `auto` | bool | false | 为 true 时根据模型包围盒自动放置相机，可搭配 `vfov` 使用 |
 
+**lighting / lights**（均可选；不写 `lights` 时使用一组默认方向光和点光源）
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `lighting.ambient` | [r,g,b] | 环境光颜色，影响阴影内的最低亮度 |
+| `lights[].type` | string | 支持 `"directional"` 和 `"point"` |
+| `lights[].direction` | [x,y,z] | 方向光方向，表示光线照射方向 |
+| `lights[].position` | [x,y,z] | 点光源位置 |
+| `lights[].color` | [r,g,b] | 光源颜色 |
+| `lights[].intensity` | float | 光源强度；点光源会随距离平方衰减 |
+
+渲染器会对点光源和方向光发射阴影射线，被遮挡的光源不会给当前命中点贡献直接光照。
+
+**ground**（可选；用于自动生成接收阴影的地面）
+
+| 字段 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `enabled` | bool | true | 是否生成地面；只有写了 `ground` 块才会启用 |
+| `size` | float | 根据主体包围盒自动计算 | 地面边长 |
+| `y` | float | 主体包围盒最低点略下方 | 地面高度 |
+| `material` | object | 灰米色漫反射材质 | 地面材质，格式同普通 `material` |
+
+自动地面会加入 BVH 参与求交，因此模型可以把点光源/方向光阴影投到地面上，形成接触阴影。自动相机仍按模型主体包围盒取景，不会被大地面拉远。
+
 **objects**（数组，每个元素是一个物体）
 
 | 字段 | 类型 | 说明 |
@@ -158,17 +218,18 @@ open out.png
 | `fit_center` | [x,y,z] | 自动居中后的目标中心，默认 [0,0,0] |
 | `scale` | float | 手动缩放，或在 `auto_fit` 下作为缩放倍率 |
 | `translate` | [x,y,z] | 手动平移，或在 `auto_fit` 下作为额外偏移 |
-| `material` | object | 材质定义，见下 |
+| `material` | object | 模型没有内嵌材质时使用的 fallback 材质，见下 |
+| `override_material` | bool | 为 true 时强制用 `material` 覆盖 GLB 内嵌材质 |
 
 **material.type** 支持三种：
 
 | 类型 | 额外字段 | 说明 |
 |------|----------|------|
-| `"lambertian"` | `albedo`: [r,g,b] | 漫反射（哑光） |
-| `"metal"` | `albedo`: [r,g,b], `fuzz`: 0~1 | 金属反射，fuzz=0 镜面，越大越粗糙 |
+| `"lambertian"` | `albedo`: [r,g,b], `texture`: string/object | 漫反射（哑光） |
+| `"metal"` | `albedo`: [r,g,b], `texture`: string/object, `fuzz`: 0~1 | 金属反射，fuzz=0 镜面，越大越粗糙 |
 | `"dielectric"` | `ior`: float | 玻璃/水等透明介质，ior=1.5 玻璃，1.33 水 |
 
-颜色 `albedo` 各分量范围 [0, 1]。
+颜色 `albedo` 各分量范围 [0, 1]。`texture` 可以直接写图片路径，也可以写成 `{ "path": "..." }`。当前支持 PPM/PNM，PNG/JPG 会在 macOS 上通过 `sips` 转码后读取。
 
 ### 示例场景
 
@@ -178,6 +239,7 @@ open out.png
 | `scenes/three_balls.json` | 漫反射 + 玻璃 + 金属 三球场景 |
 | `scenes/obj.json` | 通用 OBJ/GLB 模型模板，配合 `--model` 使用 |
 | `scenes/mark.json` | 加载 `models/obj/mark.obj` 的网格场景 |
+| `scenes/textured_quad.json` | 带 UV 和棋盘纹理的最小贴图验证场景 |
 
 ## OBJ / GLB 网格支持
 
@@ -185,13 +247,17 @@ open out.png
 当前范围刻意保持最小：
 
 - 支持 `v`、`vn`、`f`
+- 支持 OBJ `vt`，命中三角形时会插值 UV 并采样材质纹理
 - 支持三角形、四边形和一般多边形面，内部会自动扇形拆分为三角形
 - 支持 `v` / `v//vn` / `v/vt/vn` 等常见面索引格式
-- 支持 GLB 里的 `POSITION`、`NORMAL`、`indices`、节点矩阵和基础 `baseColorFactor`
+- 支持 GLB 里的 `POSITION`、`NORMAL`、`TEXCOORD_0`、`indices` 和节点矩阵/TRS
+- 支持 GLB 基础材质：`baseColorFactor`、`metallicFactor`、`roughnessFactor`、透明度 alpha
+- 支持 GLB `baseColorTexture`，可读取内嵌 bufferView 图片或外部图片路径
+- GLB 材质会按 primitive 自动绑定到三角形；`material` 字段只作为 fallback，除非设置 `override_material: true`
 - 支持根据 OBJ 包围盒自动居中、缩放模型
 - 支持没有显式 `camera` 时根据模型包围盒自动放置相机
 - 支持 `scale` 和 `translate` 两个基础变换；在 `auto_fit` 下它们会作为自动适配后的额外调整
-- 暂不解析 `mtl`、纹理贴图和旋转变换
+- 暂不解析 `mtl` 和旋转变换；PNG/JPG 贴图解码依赖 macOS `sips`
 
 示例：
 
@@ -202,8 +268,10 @@ open out.png
     "auto_fit": true,
     "fit_size": 3.0,
     "fit_center": [0, 0, 0],
+    "override_material": false,
     "material": {
         "type": "lambertian",
+        "texture": "../textures/checker.pnm",
         "albedo": [0.75, 0.2, 0.2]
     }
 }

@@ -3,6 +3,7 @@
 
 #include "raytracer/geometry/aabb.h"
 #include "raytracer/geometry/triangle.h"
+#include "raytracer/math/vec2.h"
 #include <algorithm>
 #include <fstream>
 #include <sstream>
@@ -13,14 +14,33 @@
 struct ObjTriangleData {
     Point3 v0, v1, v2;
     Vec3 n0, n1, n2;
+    Vec2 uv0, uv1, uv2;
     bool has_normals = false;
+    bool has_uvs = false;
     int material_index = -1;
+};
+
+struct LoadedTextureData {
+    std::string name;
+    std::string path;
+    std::string mime_type;
+    std::vector<unsigned char> encoded;
+};
+
+struct LoadedMaterialData {
+    std::string name;
+    Color albedo = Color(0.7, 0.7, 0.7);
+    double metallic = 0.0;
+    double roughness = 0.6;
+    double alpha = 1.0;
+    int base_color_texture = -1;
 };
 
 struct ObjMeshData {
     std::vector<ObjTriangleData> triangles;
     AABB bounds;
-    std::vector<Color> material_albedos;
+    std::vector<LoadedMaterialData> materials;
+    std::vector<LoadedTextureData> textures;
 };
 
 struct ObjFaceIndex {
@@ -92,6 +112,7 @@ inline ObjMeshData load_obj_mesh(const std::string& path,
     if (!in) throw std::runtime_error("Cannot open OBJ file: " + path);
 
     std::vector<Point3> positions;
+    std::vector<Vec2> texcoords;
     std::vector<Vec3> normals;
     std::vector<std::vector<ObjFaceIndex>> faces;
     std::string line;
@@ -112,6 +133,10 @@ inline ObjMeshData load_obj_mesh(const std::string& path,
             double x, y, z;
             iss >> x >> y >> z;
             normals.push_back(Vec3(x, y, z).normalized());
+        } else if (tag == "vt") {
+            double u, v;
+            iss >> u >> v;
+            texcoords.push_back(Vec2(u, v));
         } else if (tag == "f") {
             std::vector<ObjFaceIndex> face;
             std::string token;
@@ -145,6 +170,13 @@ inline ObjMeshData load_obj_mesh(const std::string& path,
                 tri.n1 = normals.at(resolve_obj_index(idx1.vn, normals.size()));
                 tri.n2 = normals.at(resolve_obj_index(idx2.vn, normals.size()));
                 tri.has_normals = true;
+            }
+
+            if (idx0.vt != 0 && idx1.vt != 0 && idx2.vt != 0 && !texcoords.empty()) {
+                tri.uv0 = texcoords.at(resolve_obj_index(idx0.vt, texcoords.size()));
+                tri.uv1 = texcoords.at(resolve_obj_index(idx1.vt, texcoords.size()));
+                tri.uv2 = texcoords.at(resolve_obj_index(idx2.vt, texcoords.size()));
+                tri.has_uvs = true;
             }
 
             mesh.triangles.push_back(tri);

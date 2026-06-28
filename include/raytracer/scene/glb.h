@@ -8,6 +8,7 @@
 #include <cstring>
 #include <fstream>
 #include <iterator>
+#include <filesystem>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -203,6 +204,25 @@ inline std::vector<Vec3> read_vec3_accessor(const GlbContext& glb, int accessor_
     return out;
 }
 
+inline std::vector<Vec2> read_vec2_accessor(const GlbContext& glb, int accessor_index) {
+    const JsonValue& accessor = glb.root.at("accessors").arrVal.at(accessor_index);
+    if (accessor.at("type").strVal != "VEC2" || json_int(accessor, "componentType") != 5126) {
+        throw std::runtime_error("GLB: expected float VEC2 accessor");
+    }
+
+    int count = json_int(accessor, "count");
+    size_t offset = accessor_offset(glb.root, accessor_index, 8);
+    size_t stride = accessor_stride(glb.root, accessor_index, 8);
+
+    std::vector<Vec2> out;
+    out.reserve(count);
+    for (int i = 0; i < count; i++) {
+        size_t p = offset + size_t(i) * stride;
+        out.push_back(Vec2(read_f32(glb.bin, p), read_f32(glb.bin, p + 4)));
+    }
+    return out;
+}
+
 inline std::vector<uint32_t> read_index_accessor(const GlbContext& glb, int accessor_index) {
     const JsonValue& accessor = glb.root.at("accessors").arrVal.at(accessor_index);
     if (accessor.at("type").strVal != "SCALAR") throw std::runtime_error("GLB: expected scalar indices");
@@ -221,15 +241,62 @@ inline std::vector<uint32_t> read_index_accessor(const GlbContext& glb, int acce
     return out;
 }
 
-inline Color material_base_color(const JsonValue& material) {
+inline std::vector<unsigned char> read_buffer_view_bytes(const GlbContext& glb, int view_index) {
+    const JsonValue& view = glb.root.at("bufferViews").arrVal.at(view_index);
+    size_t offset = static_cast<size_t>(json_int(view, "byteOffset", 0));
+    size_t length = static_cast<size_t>(json_int(view, "byteLength", 0));
+    if (offset + length > glb.bin.size()) throw std::runtime_error("GLB: image bufferView out of range");
+    return std::vector<unsigned char>(glb.bin.begin() + offset, glb.bin.begin() + offset + length);
+}
+
+inline LoadedTextureData glb_texture_data(const GlbContext& glb,
+                                          const std::filesystem::path& base_dir,
+                                          int texture_index) {
+    LoadedTextureData texture;
+    const JsonValue& gltf_texture = glb.root.at("textures").arrVal.at(texture_index);
+    int source_index = json_int(gltf_texture, "source", -1);
+    if (source_index < 0) return texture;
+
+    const JsonValue& image = glb.root.at("images").arrVal.at(source_index);
+    if (image.has("name")) texture.name = image.at("name").strVal;
+    if (image.has("mimeType")) texture.mime_type = image.at("mimeType").strVal;
+
+    if (image.has("bufferView")) {
+        texture.encoded = read_buffer_view_bytes(glb, static_cast<int>(image.at("bufferView").numVal));
+    } else if (image.has("uri")) {
+        std::filesystem::path uri(image.at("uri").strVal);
+        if (uri.is_relative()) uri = base_dir / uri;
+        texture.path = uri.lexically_normal().string();
+    }
+
+    return texture;
+}
+
+inline LoadedMaterialData glb_material_data(const JsonValue& material) {
+    LoadedMaterialData data;
+    if (material.has("name")) data.name = material.at("name").strVal;
+
     if (material.has("pbrMetallicRoughness")) {
         const JsonValue& pbr = material.at("pbrMetallicRoughness");
         if (pbr.has("baseColorFactor")) {
             const auto& color = pbr.at("baseColorFactor").arrVal;
-            if (color.size() >= 3) return Color(color[0].numVal, color[1].numVal, color[2].numVal);
+            if (color.size() >= 3) {
+                data.albedo = Color(color[0].numVal, color[1].numVal, color[2].numVal);
+            }
+            if (color.size() >= 4) data.alpha = color[3].numVal;
+        }
+        data.metallic = json_double(pbr, "metallicFactor", 1.0);
+        data.roughness = json_double(pbr, "roughnessFactor", 1.0);
+        if (pbr.has("baseColorTexture")) {
+            data.base_color_texture = json_int(pbr.at("baseColorTexture"), "index", -1);
         }
     }
-    return Color(0.7, 0.7, 0.7);
+
+    if (material.has("alphaMode") && material.at("alphaMode").strVal == "BLEND") {
+        data.alpha = data.alpha < 1.0 ? data.alpha : 0.5;
+    }
+
+    return data;
 }
 
 inline void add_glb_mesh_node(const GlbContext& glb,
@@ -250,10 +317,13 @@ inline void add_glb_mesh_node(const GlbContext& glb,
             if (pos_accessor < 0) throw std::runtime_error("GLB: primitive missing POSITION");
 
             int normal_accessor = attrs.has("NORMAL") ? json_int(attrs, "NORMAL") : -1;
+            int texcoord_accessor = attrs.has("TEXCOORD_0") ? json_int(attrs, "TEXCOORD_0") : -1;
             int material_index = json_int(prim, "material", -1);
             std::vector<Vec3> positions = read_vec3_accessor(glb, pos_accessor);
             std::vector<Vec3> normals;
             if (normal_accessor >= 0) normals = read_vec3_accessor(glb, normal_accessor);
+            std::vector<Vec2> texcoords;
+            if (texcoord_accessor >= 0) texcoords = read_vec2_accessor(glb, texcoord_accessor);
 
             std::vector<uint32_t> indices;
             if (prim.has("indices")) {
@@ -276,6 +346,12 @@ inline void add_glb_mesh_node(const GlbContext& glb,
                     tri.n2 = transform.transform_vector(normals.at(i2)).normalized();
                     tri.has_normals = true;
                 }
+                if (!texcoords.empty()) {
+                    tri.uv0 = texcoords.at(i0);
+                    tri.uv1 = texcoords.at(i1);
+                    tri.uv2 = texcoords.at(i2);
+                    tri.has_uvs = true;
+                }
                 mesh.triangles.push_back(tri);
             }
         }
@@ -291,10 +367,17 @@ inline void add_glb_mesh_node(const GlbContext& glb,
 inline ObjMeshData load_glb_mesh(const std::string& path) {
     GlbContext glb = read_glb_context(path);
     ObjMeshData mesh;
+    std::filesystem::path base_dir = std::filesystem::absolute(path).parent_path();
+
+    if (glb.root.has("textures") && glb.root.has("images")) {
+        for (size_t i = 0; i < glb.root.at("textures").arrVal.size(); i++) {
+            mesh.textures.push_back(glb_texture_data(glb, base_dir, static_cast<int>(i)));
+        }
+    }
 
     if (glb.root.has("materials")) {
         for (const JsonValue& mat : glb.root.at("materials").arrVal) {
-            mesh.material_albedos.push_back(material_base_color(mat));
+            mesh.materials.push_back(glb_material_data(mat));
         }
     }
 

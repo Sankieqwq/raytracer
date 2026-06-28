@@ -1,0 +1,39 @@
+{
+    "image": {
+        "width": 240,
+        "height": 240,
+        "samples": 1,
+        "max_depth": 4,
+        "output": "textured_quad.ppm"
+    },
+    "camera": {
+        "lookfrom": [0, 0, 4],
+        "lookat": [0, 0, 0],
+        "vup": [0, 1, 0],
+        "vfov": 35,
+        "aperture": 0.0
+    },
+    "lighting": {
+        "ambient": [0.25, 0.25, 0.25]
+    },
+    "lights": [
+        {
+            "type": "directional",
+            "direction": [0, 0, -1],
+            "color": [1, 1, 1],
+            "intensity": 1.0
+        }
+    ],
+    "objects": [
+        {
+            "type": "mesh",
+            "obj": "../models/obj/textured_quad.obj",
+            "auto_fit": false,
+            "material": {
+                "type": "lambertian",
+                "texture": "../textures/checker.pnm",
+                "albedo": [1, 1, 1]
+            }
+        }
+    ]
+}
