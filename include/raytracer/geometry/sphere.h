@@ -3,6 +3,8 @@
 #define RT_SPHERE_H
 
 #include "raytracer/geometry/hittable.h"
+#include "raytracer/math/util.h"
+#include <algorithm>
 #include <cmath>
 
 class Sphere : public Hittable {
@@ -35,6 +37,14 @@ public:
         rec.p = r.at(root);
         Vec3 outward = (rec.p - center) / radius;
         rec.set_face_normal(r, outward);
+        // UV: spherical coordinates. oc = normalized outward direction.
+        double theta = std::acos(std::clamp(-outward.y, -1.0, 1.0));
+        double phi = std::atan2(-outward.z, outward.x) + pi;
+        rec.u = phi / (2 * pi);
+        rec.v = theta / pi;
+        // Tangent: along longitude (dp/du direction)
+        rec.tangent = Vec3(-outward.z, 0, outward.x).normalized();
+        rec.has_tangent = true;
         rec.material = material;
         return true;
     }
