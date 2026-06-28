@@ -1,7 +1,9 @@
 #ifndef RT_OBJ_H
 #define RT_OBJ_H
 
+#include "raytracer/geometry/aabb.h"
 #include "raytracer/geometry/triangle.h"
+#include <algorithm>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
@@ -12,6 +14,13 @@ struct ObjTriangleData {
     Point3 v0, v1, v2;
     Vec3 n0, n1, n2;
     bool has_normals = false;
+    int material_index = -1;
+};
+
+struct ObjMeshData {
+    std::vector<ObjTriangleData> triangles;
+    AABB bounds;
+    std::vector<Color> material_albedos;
 };
 
 struct ObjFaceIndex {
@@ -50,15 +59,41 @@ inline ObjFaceIndex parse_obj_face_index(const std::string& token) {
     return idx;
 }
 
-inline std::vector<ObjTriangleData> load_obj_triangles(const std::string& path,
-                                                       double scale = 1.0,
-                                                       const Vec3& translate = Vec3(0, 0, 0)) {
+inline Point3 transform_obj_point(const Point3& p, double scale, const Vec3& translate) {
+    return scale * p + translate;
+}
+
+inline AABB compute_obj_bounds(const std::vector<Point3>& positions,
+                               double scale,
+                               const Vec3& translate) {
+    if (positions.empty()) throw std::runtime_error("OBJ contains no vertices");
+
+    Point3 first = transform_obj_point(positions[0], scale, translate);
+    Point3 min_p = first;
+    Point3 max_p = first;
+
+    for (const Point3& p : positions) {
+        Point3 t = transform_obj_point(p, scale, translate);
+        min_p.x = std::min(min_p.x, t.x);
+        min_p.y = std::min(min_p.y, t.y);
+        min_p.z = std::min(min_p.z, t.z);
+        max_p.x = std::max(max_p.x, t.x);
+        max_p.y = std::max(max_p.y, t.y);
+        max_p.z = std::max(max_p.z, t.z);
+    }
+
+    return AABB(min_p, max_p);
+}
+
+inline ObjMeshData load_obj_mesh(const std::string& path,
+                                 double scale = 1.0,
+                                 const Vec3& translate = Vec3(0, 0, 0)) {
     std::ifstream in(path);
     if (!in) throw std::runtime_error("Cannot open OBJ file: " + path);
 
     std::vector<Point3> positions;
     std::vector<Vec3> normals;
-    std::vector<ObjTriangleData> triangles;
+    std::vector<std::vector<ObjFaceIndex>> faces;
     std::string line;
 
     while (std::getline(in, line)) {
@@ -72,7 +107,7 @@ inline std::vector<ObjTriangleData> load_obj_triangles(const std::string& path,
         if (tag == "v") {
             double x, y, z;
             iss >> x >> y >> z;
-            positions.push_back(scale * Point3(x, y, z) + translate);
+            positions.push_back(Point3(x, y, z));
         } else if (tag == "vn") {
             double x, y, z;
             iss >> x >> y >> z;
@@ -84,34 +119,49 @@ inline std::vector<ObjTriangleData> load_obj_triangles(const std::string& path,
                 face.push_back(parse_obj_face_index(token));
             }
             if (face.size() < 3) continue;
-
-            for (size_t i = 1; i + 1 < face.size(); i++) {
-                ObjTriangleData tri;
-                const ObjFaceIndex idx0 = face[0];
-                const ObjFaceIndex idx1 = face[i];
-                const ObjFaceIndex idx2 = face[i + 1];
-
-                tri.v0 = positions.at(resolve_obj_index(idx0.v, positions.size()));
-                tri.v1 = positions.at(resolve_obj_index(idx1.v, positions.size()));
-                tri.v2 = positions.at(resolve_obj_index(idx2.v, positions.size()));
-
-                if (idx0.vn != 0 && idx1.vn != 0 && idx2.vn != 0 && !normals.empty()) {
-                    tri.n0 = normals.at(resolve_obj_index(idx0.vn, normals.size()));
-                    tri.n1 = normals.at(resolve_obj_index(idx1.vn, normals.size()));
-                    tri.n2 = normals.at(resolve_obj_index(idx2.vn, normals.size()));
-                    tri.has_normals = true;
-                }
-
-                triangles.push_back(tri);
-            }
+            faces.push_back(face);
         }
     }
 
-    if (triangles.empty()) {
+    ObjMeshData mesh;
+    mesh.bounds = compute_obj_bounds(positions, scale, translate);
+
+    for (const std::vector<ObjFaceIndex>& face : faces) {
+        for (size_t i = 1; i + 1 < face.size(); i++) {
+            ObjTriangleData tri;
+            const ObjFaceIndex idx0 = face[0];
+            const ObjFaceIndex idx1 = face[i];
+            const ObjFaceIndex idx2 = face[i + 1];
+
+            tri.v0 = transform_obj_point(
+                positions.at(resolve_obj_index(idx0.v, positions.size())), scale, translate);
+            tri.v1 = transform_obj_point(
+                positions.at(resolve_obj_index(idx1.v, positions.size())), scale, translate);
+            tri.v2 = transform_obj_point(
+                positions.at(resolve_obj_index(idx2.v, positions.size())), scale, translate);
+
+            if (idx0.vn != 0 && idx1.vn != 0 && idx2.vn != 0 && !normals.empty()) {
+                tri.n0 = normals.at(resolve_obj_index(idx0.vn, normals.size()));
+                tri.n1 = normals.at(resolve_obj_index(idx1.vn, normals.size()));
+                tri.n2 = normals.at(resolve_obj_index(idx2.vn, normals.size()));
+                tri.has_normals = true;
+            }
+
+            mesh.triangles.push_back(tri);
+        }
+    }
+
+    if (mesh.triangles.empty()) {
         throw std::runtime_error("OBJ contains no faces: " + path);
     }
 
-    return triangles;
+    return mesh;
+}
+
+inline std::vector<ObjTriangleData> load_obj_triangles(const std::string& path,
+                                                       double scale = 1.0,
+                                                       const Vec3& translate = Vec3(0, 0, 0)) {
+    return load_obj_mesh(path, scale, translate).triangles;
 }
 
 #endif

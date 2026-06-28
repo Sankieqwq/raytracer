@@ -4,21 +4,11 @@
         "height": 200,
         "samples": 4,
         "max_depth": 8,
-        "output": "mark.ppm"
+        "output": "obj.ppm"
     },
     "objects": [
         {
-            "type": "sphere",
-            "center": [0, -100.55, 0],
-            "radius": 100,
-            "material": {
-                "type": "lambertian",
-                "albedo": [0.7, 0.7, 0.7]
-            }
-        },
-        {
             "type": "mesh",
-            "obj": "../models/obj/mark.obj",
             "auto_fit": true,
             "fit_size": 3.0,
             "fit_center": [0, 0, 0],

@@ -13,6 +13,14 @@ public:
     AABB(const Point3& minimum, const Point3& maximum)
         : minimum(minimum), maximum(maximum) {}
 
+    Point3 center() const { return 0.5 * (minimum + maximum); }
+    Vec3 extent() const { return maximum - minimum; }
+
+    double max_extent() const {
+        Vec3 e = extent();
+        return std::max(e.x, std::max(e.y, e.z));
+    }
+
     bool hit(const Ray& r, double t_min, double t_max) const {
         for (int axis = 0; axis < 3; axis++) {
             double origin = axis_value(r.origin, axis);
