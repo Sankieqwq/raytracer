@@ -10,10 +10,12 @@ class Material;
 struct HitRecord {
     Point3 p;
     Vec3 normal;
+    Vec3 tangent;
     double t = 0;
     double u = 0;
     double v = 0;
     bool front_face = true;
+    bool has_tangent = false;
     Material* material = nullptr;
 
     void set_face_normal(const Ray& r, const Vec3& outward_normal) {
