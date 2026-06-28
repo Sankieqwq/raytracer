@@ -1,4 +1,7 @@
 // Module D: main -- CLI + JSON scene loading + render loop
+#define TINYOBJLOADER_IMPLEMENTATION
+#include "tiny_obj_loader.h"
+
 #include "raytracer/math/vec3.h"
 #include "raytracer/render/image.h"
 #include "raytracer/math/util.h"
