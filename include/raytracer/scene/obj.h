@@ -17,10 +17,18 @@ struct ObjTriangleData {
     int material_index = -1;
 };
 
+struct LoadedMaterialData {
+    std::string name;
+    Color albedo = Color(0.7, 0.7, 0.7);
+    double metallic = 0.0;
+    double roughness = 0.6;
+    double alpha = 1.0;
+};
+
 struct ObjMeshData {
     std::vector<ObjTriangleData> triangles;
     AABB bounds;
-    std::vector<Color> material_albedos;
+    std::vector<LoadedMaterialData> materials;
 };
 
 struct ObjFaceIndex {

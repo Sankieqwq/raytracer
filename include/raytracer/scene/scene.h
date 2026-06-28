@@ -111,6 +111,24 @@ inline Material* ensure_material(const JsonValue& obj, Scene& scene) {
     return parse_material(fallback, scene);
 }
 
+inline Material* add_loaded_material(const LoadedMaterialData& data, Scene& scene) {
+    std::unique_ptr<Material> mat;
+    if (data.alpha < 0.35) {
+        mat = std::make_unique<Dielectric>(1.5);
+    } else if (data.metallic > 0.5) {
+        double fuzz = data.roughness;
+        if (fuzz < 0.0) fuzz = 0.0;
+        if (fuzz > 1.0) fuzz = 1.0;
+        mat = std::make_unique<Metal>(data.albedo, fuzz);
+    } else {
+        mat = std::make_unique<Lambertian>(data.albedo);
+    }
+
+    Material* ptr = mat.get();
+    scene.materials.push_back(std::move(mat));
+    return ptr;
+}
+
 inline Light parse_light(const JsonValue& light_json) {
     Light light;
     std::string type = light_json.has("type") ? light_json.at("type").strVal : "directional";
@@ -338,11 +356,10 @@ inline void load_scene(const std::string& path,
 
                 Material* fallback_mat = ensure_material(obj, scene);
                 std::vector<Material*> embedded_materials;
-                if (!obj.has("material")) {
-                    for (const Color& albedo : mesh.material_albedos) {
-                        auto mat = std::make_unique<Lambertian>(albedo);
-                        embedded_materials.push_back(mat.get());
-                        scene.materials.push_back(std::move(mat));
+                bool override_material = get_bool(obj, "override_material", false);
+                if (!override_material) {
+                    for (const LoadedMaterialData& material : mesh.materials) {
+                        embedded_materials.push_back(add_loaded_material(material, scene));
                     }
                 }
 

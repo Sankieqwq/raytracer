@@ -188,7 +188,8 @@ open out.png
 | `fit_center` | [x,y,z] | 自动居中后的目标中心，默认 [0,0,0] |
 | `scale` | float | 手动缩放，或在 `auto_fit` 下作为缩放倍率 |
 | `translate` | [x,y,z] | 手动平移，或在 `auto_fit` 下作为额外偏移 |
-| `material` | object | 材质定义，见下 |
+| `material` | object | 模型没有内嵌材质时使用的 fallback 材质，见下 |
+| `override_material` | bool | 为 true 时强制用 `material` 覆盖 GLB 内嵌材质 |
 
 **material.type** 支持三种：
 
@@ -217,7 +218,9 @@ open out.png
 - 支持 `v`、`vn`、`f`
 - 支持三角形、四边形和一般多边形面，内部会自动扇形拆分为三角形
 - 支持 `v` / `v//vn` / `v/vt/vn` 等常见面索引格式
-- 支持 GLB 里的 `POSITION`、`NORMAL`、`indices`、节点矩阵和基础 `baseColorFactor`
+- 支持 GLB 里的 `POSITION`、`NORMAL`、`indices` 和节点矩阵/TRS
+- 支持 GLB 基础材质：`baseColorFactor`、`metallicFactor`、`roughnessFactor`、透明度 alpha
+- GLB 材质会按 primitive 自动绑定到三角形；`material` 字段只作为 fallback，除非设置 `override_material: true`
 - 支持根据 OBJ 包围盒自动居中、缩放模型
 - 支持没有显式 `camera` 时根据模型包围盒自动放置相机
 - 支持 `scale` 和 `translate` 两个基础变换；在 `auto_fit` 下它们会作为自动适配后的额外调整
@@ -232,6 +235,7 @@ open out.png
     "auto_fit": true,
     "fit_size": 3.0,
     "fit_center": [0, 0, 0],
+    "override_material": false,
     "material": {
         "type": "lambertian",
         "albedo": [0.75, 0.2, 0.2]

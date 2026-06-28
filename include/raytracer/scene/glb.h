@@ -221,15 +221,28 @@ inline std::vector<uint32_t> read_index_accessor(const GlbContext& glb, int acce
     return out;
 }
 
-inline Color material_base_color(const JsonValue& material) {
+inline LoadedMaterialData glb_material_data(const JsonValue& material) {
+    LoadedMaterialData data;
+    if (material.has("name")) data.name = material.at("name").strVal;
+
     if (material.has("pbrMetallicRoughness")) {
         const JsonValue& pbr = material.at("pbrMetallicRoughness");
         if (pbr.has("baseColorFactor")) {
             const auto& color = pbr.at("baseColorFactor").arrVal;
-            if (color.size() >= 3) return Color(color[0].numVal, color[1].numVal, color[2].numVal);
+            if (color.size() >= 3) {
+                data.albedo = Color(color[0].numVal, color[1].numVal, color[2].numVal);
+            }
+            if (color.size() >= 4) data.alpha = color[3].numVal;
         }
+        data.metallic = json_double(pbr, "metallicFactor", 1.0);
+        data.roughness = json_double(pbr, "roughnessFactor", 1.0);
     }
-    return Color(0.7, 0.7, 0.7);
+
+    if (material.has("alphaMode") && material.at("alphaMode").strVal == "BLEND") {
+        data.alpha = data.alpha < 1.0 ? data.alpha : 0.5;
+    }
+
+    return data;
 }
 
 inline void add_glb_mesh_node(const GlbContext& glb,
@@ -294,7 +307,7 @@ inline ObjMeshData load_glb_mesh(const std::string& path) {
 
     if (glb.root.has("materials")) {
         for (const JsonValue& mat : glb.root.at("materials").arrVal) {
-            mesh.material_albedos.push_back(material_base_color(mat));
+            mesh.materials.push_back(glb_material_data(mat));
         }
     }
 
