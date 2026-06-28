@@ -17,7 +17,7 @@ bool is_shadowed(const Hittable& world, const Ray& shadow_ray, double max_t) {
 }
 
 Color direct_lighting(const HitRecord& rec, const Scene& scene) {
-    Color base = rec.material ? rec.material->base_color() : Color(0.8, 0.8, 0.8);
+    Color base = rec.material ? rec.material->base_color(rec) : Color(0.8, 0.8, 0.8);
     Color result = base * scene.ambient_light;
 
     for (const Light& light : scene.lights) {

@@ -5,22 +5,30 @@
 #include "raytracer/math/ray.h"
 #include "raytracer/math/vec3.h"
 #include "raytracer/geometry/hittable.h"
+#include "raytracer/material/texture.h"
 #include <cmath>
+#include <memory>
 
 class Material {
 public:
     virtual ~Material() = default;
     virtual bool scatter(const Ray& r_in, const HitRecord& rec,
                          Color& attenuation, Ray& scattered) const = 0;
-    virtual Color base_color() const { return Color(0.8, 0.8, 0.8); }
+    virtual Color base_color(const HitRecord& rec) const {
+        (void)rec;
+        return Color(0.8, 0.8, 0.8);
+    }
 };
 
 class Lambertian : public Material {
 public:
-    Color albedo;
-    Lambertian(const Color& albedo) : albedo(albedo) {}
+    std::shared_ptr<Texture> texture;
+    Lambertian(const Color& albedo) : texture(std::make_shared<SolidColorTexture>(albedo)) {}
+    explicit Lambertian(std::shared_ptr<Texture> texture) : texture(std::move(texture)) {}
 
-    Color base_color() const override { return albedo; }
+    Color base_color(const HitRecord& rec) const override {
+        return texture->value(rec.u, rec.v, rec.p);
+    }
 
     bool scatter(const Ray& r_in, const HitRecord& rec,
                  Color& attenuation, Ray& scattered) const override {
@@ -28,25 +36,29 @@ public:
         Vec3 dir = rec.normal + random_unit_vector();
         if (dir.length_squared() < 1e-8) dir = rec.normal;
         scattered = Ray(rec.p, dir);
-        attenuation = albedo;
+        attenuation = base_color(rec);
         return true;
     }
 };
 
 class Metal : public Material {
 public:
-    Color albedo;
+    std::shared_ptr<Texture> texture;
     double fuzz;
     Metal(const Color& albedo, double fuzz = 0)
-        : albedo(albedo), fuzz(fuzz < 1 ? fuzz : 1) {}
+        : texture(std::make_shared<SolidColorTexture>(albedo)), fuzz(fuzz < 1 ? fuzz : 1) {}
+    Metal(std::shared_ptr<Texture> texture, double fuzz = 0)
+        : texture(std::move(texture)), fuzz(fuzz < 1 ? fuzz : 1) {}
 
-    Color base_color() const override { return albedo; }
+    Color base_color(const HitRecord& rec) const override {
+        return texture->value(rec.u, rec.v, rec.p);
+    }
 
     bool scatter(const Ray& r_in, const HitRecord& rec,
                  Color& attenuation, Ray& scattered) const override {
         Vec3 reflected = reflect(r_in.direction.normalized(), rec.normal);
         scattered = Ray(rec.p, reflected + fuzz * random_in_unit_sphere());
-        attenuation = albedo;
+        attenuation = base_color(rec);
         return dot(scattered.direction, rec.normal) > 0;
     }
 };
@@ -56,7 +68,10 @@ public:
     double ior;
     Dielectric(double index_of_refraction) : ior(index_of_refraction) {}
 
-    Color base_color() const override { return Color(1.0, 1.0, 1.0); }
+    Color base_color(const HitRecord& rec) const override {
+        (void)rec;
+        return Color(1.0, 1.0, 1.0);
+    }
 
     bool scatter(const Ray& r_in, const HitRecord& rec,
                  Color& attenuation, Ray& scattered) const override {

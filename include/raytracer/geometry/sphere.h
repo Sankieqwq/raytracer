@@ -34,6 +34,7 @@ public:
         rec.t = root;
         rec.p = r.at(root);
         Vec3 outward = (rec.p - center) / radius;
+        get_sphere_uv(outward, rec.u, rec.v);
         rec.set_face_normal(r, outward);
         rec.material = material;
         return true;
@@ -43,6 +44,14 @@ public:
         Vec3 radius_vec(radius, radius, radius);
         output_box = AABB(center - radius_vec, center + radius_vec);
         return true;
+    }
+
+private:
+    static void get_sphere_uv(const Point3& p, double& u, double& v) {
+        double theta = std::acos(-p.y);
+        double phi = std::atan2(-p.z, p.x) + pi;
+        u = phi / (2 * pi);
+        v = theta / pi;
     }
 };
 

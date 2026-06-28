@@ -195,11 +195,11 @@ open out.png
 
 | 类型 | 额外字段 | 说明 |
 |------|----------|------|
-| `"lambertian"` | `albedo`: [r,g,b] | 漫反射（哑光） |
-| `"metal"` | `albedo`: [r,g,b], `fuzz`: 0~1 | 金属反射，fuzz=0 镜面，越大越粗糙 |
+| `"lambertian"` | `albedo`: [r,g,b], `texture`: string/object | 漫反射（哑光） |
+| `"metal"` | `albedo`: [r,g,b], `texture`: string/object, `fuzz`: 0~1 | 金属反射，fuzz=0 镜面，越大越粗糙 |
 | `"dielectric"` | `ior`: float | 玻璃/水等透明介质，ior=1.5 玻璃，1.33 水 |
 
-颜色 `albedo` 各分量范围 [0, 1]。
+颜色 `albedo` 各分量范围 [0, 1]。`texture` 可以直接写图片路径，也可以写成 `{ "path": "..." }`。当前支持 PPM/PNM，PNG/JPG 会在 macOS 上通过 `sips` 转码后读取。
 
 ### 示例场景
 
@@ -209,6 +209,7 @@ open out.png
 | `scenes/three_balls.json` | 漫反射 + 玻璃 + 金属 三球场景 |
 | `scenes/obj.json` | 通用 OBJ/GLB 模型模板，配合 `--model` 使用 |
 | `scenes/mark.json` | 加载 `models/obj/mark.obj` 的网格场景 |
+| `scenes/textured_quad.json` | 带 UV 和棋盘纹理的最小贴图验证场景 |
 
 ## OBJ / GLB 网格支持
 
@@ -216,15 +217,17 @@ open out.png
 当前范围刻意保持最小：
 
 - 支持 `v`、`vn`、`f`
+- 支持 OBJ `vt`，命中三角形时会插值 UV 并采样材质纹理
 - 支持三角形、四边形和一般多边形面，内部会自动扇形拆分为三角形
 - 支持 `v` / `v//vn` / `v/vt/vn` 等常见面索引格式
-- 支持 GLB 里的 `POSITION`、`NORMAL`、`indices` 和节点矩阵/TRS
+- 支持 GLB 里的 `POSITION`、`NORMAL`、`TEXCOORD_0`、`indices` 和节点矩阵/TRS
 - 支持 GLB 基础材质：`baseColorFactor`、`metallicFactor`、`roughnessFactor`、透明度 alpha
+- 支持 GLB `baseColorTexture`，可读取内嵌 bufferView 图片或外部图片路径
 - GLB 材质会按 primitive 自动绑定到三角形；`material` 字段只作为 fallback，除非设置 `override_material: true`
 - 支持根据 OBJ 包围盒自动居中、缩放模型
 - 支持没有显式 `camera` 时根据模型包围盒自动放置相机
 - 支持 `scale` 和 `translate` 两个基础变换；在 `auto_fit` 下它们会作为自动适配后的额外调整
-- 暂不解析 `mtl`、纹理贴图和旋转变换
+- 暂不解析 `mtl` 和旋转变换；PNG/JPG 贴图解码依赖 macOS `sips`
 
 示例：
 
@@ -238,6 +241,7 @@ open out.png
     "override_material": false,
     "material": {
         "type": "lambertian",
+        "texture": "../textures/checker.pnm",
         "albedo": [0.75, 0.2, 0.2]
     }
 }

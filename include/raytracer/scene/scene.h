@@ -64,15 +64,51 @@ inline Vec3 to_vec3(const JsonValue& arr) {
                 arr.arrVal[2].numVal);
 }
 
-inline Material* parse_material(const JsonValue& m, Scene& scene) {
+inline std::shared_ptr<Texture> make_solid_texture(const Color& color) {
+    return std::make_shared<SolidColorTexture>(color);
+}
+
+inline std::shared_ptr<Texture> load_texture_from_path(const std::filesystem::path& base_dir,
+                                                       const std::string& texture_path) {
+    std::filesystem::path path(texture_path);
+    if (path.is_relative()) path = base_dir / path;
+    return std::make_shared<ImageTexture>(path.lexically_normal().string());
+}
+
+inline std::shared_ptr<Texture> material_texture_or_color(const JsonValue& m,
+                                                          const std::filesystem::path& base_dir,
+                                                          const Color& fallback) {
+    if (m.has("texture")) {
+        const JsonValue& texture = m.at("texture");
+        if (texture.type == JsonValue::String) {
+            return std::make_shared<TintedTexture>(
+                load_texture_from_path(base_dir, texture.strVal), fallback);
+        }
+        if (texture.has("path")) {
+            return std::make_shared<TintedTexture>(
+                load_texture_from_path(base_dir, texture.at("path").strVal), fallback);
+        }
+    }
+    if (m.has("albedo_texture")) {
+        return std::make_shared<TintedTexture>(
+            load_texture_from_path(base_dir, m.at("albedo_texture").strVal), fallback);
+    }
+    return make_solid_texture(fallback);
+}
+
+inline Material* parse_material(const JsonValue& m,
+                                Scene& scene,
+                                const std::filesystem::path& base_dir = std::filesystem::current_path()) {
     const std::string& type = m.at("type").strVal;
     std::unique_ptr<Material> mat;
 
     if (type == "lambertian") {
-        mat = std::make_unique<Lambertian>(to_vec3(m.at("albedo")));
+        Color albedo = m.has("albedo") ? to_vec3(m.at("albedo")) : Color(1.0, 1.0, 1.0);
+        mat = std::make_unique<Lambertian>(material_texture_or_color(m, base_dir, albedo));
     } else if (type == "metal") {
         double fuzz = m.has("fuzz") ? m.at("fuzz").numVal : 0.0;
-        mat = std::make_unique<Metal>(to_vec3(m.at("albedo")), fuzz);
+        Color albedo = m.has("albedo") ? to_vec3(m.at("albedo")) : Color(0.8, 0.8, 0.8);
+        mat = std::make_unique<Metal>(material_texture_or_color(m, base_dir, albedo), fuzz);
     } else if (type == "dielectric") {
         mat = std::make_unique<Dielectric>(m.at("ior").numVal);
     } else {
@@ -91,8 +127,10 @@ inline std::string resolve_asset_path(const std::filesystem::path& base_dir,
     return path.lexically_normal().string();
 }
 
-inline Material* ensure_material(const JsonValue& obj, Scene& scene) {
-    if (obj.has("material")) return parse_material(obj.at("material"), scene);
+inline Material* ensure_material(const JsonValue& obj,
+                                 Scene& scene,
+                                 const std::filesystem::path& base_dir = std::filesystem::current_path()) {
+    if (obj.has("material")) return parse_material(obj.at("material"), scene, base_dir);
     JsonValue fallback;
     fallback.type = JsonValue::Object;
     JsonValue type;
@@ -108,10 +146,29 @@ inline Material* ensure_material(const JsonValue& obj, Scene& scene) {
     }
     fallback.objVal["type"] = type;
     fallback.objVal["albedo"] = albedo;
-    return parse_material(fallback, scene);
+    return parse_material(fallback, scene, base_dir);
 }
 
-inline Material* add_loaded_material(const LoadedMaterialData& data, Scene& scene) {
+inline std::shared_ptr<Texture> make_loaded_texture(const ObjMeshData& mesh,
+                                                    const LoadedMaterialData& data) {
+    if (data.base_color_texture >= 0 &&
+        static_cast<size_t>(data.base_color_texture) < mesh.textures.size()) {
+        const LoadedTextureData& texture = mesh.textures[data.base_color_texture];
+        if (!texture.encoded.empty()) {
+            return std::make_shared<TintedTexture>(
+                std::make_shared<ImageTexture>(texture.encoded, texture.mime_type), data.albedo);
+        }
+        if (!texture.path.empty()) {
+            return std::make_shared<TintedTexture>(
+                std::make_shared<ImageTexture>(texture.path), data.albedo);
+        }
+    }
+    return make_solid_texture(data.albedo);
+}
+
+inline Material* add_loaded_material(const ObjMeshData& mesh,
+                                     const LoadedMaterialData& data,
+                                     Scene& scene) {
     std::unique_ptr<Material> mat;
     if (data.alpha < 0.35) {
         mat = std::make_unique<Dielectric>(1.5);
@@ -119,9 +176,9 @@ inline Material* add_loaded_material(const LoadedMaterialData& data, Scene& scen
         double fuzz = data.roughness;
         if (fuzz < 0.0) fuzz = 0.0;
         if (fuzz > 1.0) fuzz = 1.0;
-        mat = std::make_unique<Metal>(data.albedo, fuzz);
+        mat = std::make_unique<Metal>(make_loaded_texture(mesh, data), fuzz);
     } else {
-        mat = std::make_unique<Lambertian>(data.albedo);
+        mat = std::make_unique<Lambertian>(make_loaded_texture(mesh, data));
     }
 
     Material* ptr = mat.get();
@@ -317,7 +374,7 @@ inline void load_scene(const std::string& path,
             if (type == "sphere") {
                 Point3 center = to_vec3(obj.at("center"));
                 double radius = obj.at("radius").numVal;
-                Material* mat = ensure_material(obj, scene);
+                Material* mat = ensure_material(obj, scene, scene_dir);
                 auto sph = std::make_unique<Sphere>(center, radius, mat);
                 scene.primitives.add(sph.get());
                 scene.objects.push_back(std::move(sph));
@@ -354,12 +411,12 @@ inline void load_scene(const std::string& path,
                 ObjMeshData mesh = transform_mesh(raw_mesh, scale, translate);
                 add_mesh_bounds(scene, mesh.bounds);
 
-                Material* fallback_mat = ensure_material(obj, scene);
+                Material* fallback_mat = ensure_material(obj, scene, scene_dir);
                 std::vector<Material*> embedded_materials;
                 bool override_material = get_bool(obj, "override_material", false);
                 if (!override_material) {
                     for (const LoadedMaterialData& material : mesh.materials) {
-                        embedded_materials.push_back(add_loaded_material(material, scene));
+                        embedded_materials.push_back(add_loaded_material(mesh, material, scene));
                     }
                 }
 
@@ -371,12 +428,12 @@ inline void load_scene(const std::string& path,
                     }
 
                     std::unique_ptr<Triangle> mesh_tri;
-                    if (tri.has_normals) {
-                        mesh_tri = std::make_unique<Triangle>(
-                            tri.v0, tri.v1, tri.v2, tri.n0, tri.n1, tri.n2, tri_mat);
-                    } else {
-                        mesh_tri = std::make_unique<Triangle>(tri.v0, tri.v1, tri.v2, tri_mat);
-                    }
+                    mesh_tri = std::make_unique<Triangle>(
+                        tri.v0, tri.v1, tri.v2,
+                        tri.n0, tri.n1, tri.n2,
+                        tri.uv0, tri.uv1, tri.uv2,
+                        tri.has_normals, tri.has_uvs,
+                        tri_mat);
                     scene.primitives.add(mesh_tri.get());
                     scene.objects.push_back(std::move(mesh_tri));
                 }
