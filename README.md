@@ -45,11 +45,12 @@ g++ -std=c++17 -O2 -Wall -Wextra -Iinclude -o raytracer src/main.cpp
 # 覆盖输出路径和采样数
 ./run.sh --scene scenes/three_balls.json --out my.ppm --samples 64
 
-# 渲染 OBJ 模型场景
+# 渲染 OBJ 示例场景
 ./run.sh --scene scenes/mark.json
 
-# 直接指定 OBJ 模型，未指定 --scene 时默认使用 scenes/obj.json 作为通用模板
-./run.sh --obj models/mark.obj --out mark.ppm
+# 直接指定 OBJ/GLB 模型，未指定 --scene 时默认使用 scenes/obj.json 作为通用模板
+./run.sh --model models/obj/mark.obj --out mark.ppm
+./run.sh --model models/glb/toyota_mark_ii_jzx100.glb --out car.ppm
 ```
 
 命令行参数：
@@ -57,7 +58,8 @@ g++ -std=c++17 -O2 -Wall -Wextra -Iinclude -o raytracer src/main.cpp
 | 参数 | 含义 | 默认值 |
 |------|------|--------|
 | `--scene <path>` | 场景 JSON 文件 | `scenes/default.json` |
-| `--obj <path>` | OBJ 模型文件，覆盖场景中 `mesh` 的 `obj/path` | 未指定时使用场景配置 |
+| `--model <path>` | OBJ/GLB 模型文件，覆盖场景中 `mesh` 的 `obj/path` | 未指定时使用场景配置 |
+| `--obj <path>` | `--model` 的兼容别名 | 未指定时使用场景配置 |
 | `--out <path>` | 输出 PPM 文件（覆盖场景配置） | 场景中的 `output` |
 | `--samples <n>` | 每像素采样数（覆盖场景配置） | 场景中的 `samples` |
 | `--help` | 显示帮助 | — |
@@ -150,7 +152,7 @@ open out.png
 | `type` | string | 目前支持 `"sphere"`、`"mesh"` |
 | `center` | [x,y,z] | 球心坐标 |
 | `radius` | float | 半径 |
-| `obj` / `path` | string | `mesh` 使用的 OBJ 文件路径 |
+| `obj` / `path` | string | `mesh` 使用的 OBJ/GLB 文件路径 |
 | `auto_fit` | bool | `mesh` 是否自动居中和缩放，未写 `scale/translate` 时默认开启 |
 | `fit_size` | float | 自动缩放后的最长轴尺寸，默认 3.0 |
 | `fit_center` | [x,y,z] | 自动居中后的目标中心，默认 [0,0,0] |
@@ -174,17 +176,18 @@ open out.png
 |------|------|
 | `scenes/default.json` | 漫反射球 + 地面（基础验证） |
 | `scenes/three_balls.json` | 漫反射 + 玻璃 + 金属 三球场景 |
-| `scenes/obj.json` | 通用 OBJ 模型模板，配合 `--obj` 使用 |
-| `scenes/mark.json` | 加载 `models/mark.obj` 的网格场景 |
+| `scenes/obj.json` | 通用 OBJ/GLB 模型模板，配合 `--model` 使用 |
+| `scenes/mark.json` | 加载 `models/obj/mark.obj` 的网格场景 |
 
-## OBJ 网格支持
+## OBJ / GLB 网格支持
 
-当前版本已支持在场景 JSON 中通过 `mesh` 对象加载 Wavefront OBJ 模型，并输出渲染图片。
+当前版本已支持在场景 JSON 中通过 `mesh` 对象加载 Wavefront OBJ 或 GLB 模型，并输出渲染图片。
 当前范围刻意保持最小：
 
 - 支持 `v`、`vn`、`f`
 - 支持三角形、四边形和一般多边形面，内部会自动扇形拆分为三角形
 - 支持 `v` / `v//vn` / `v/vt/vn` 等常见面索引格式
+- 支持 GLB 里的 `POSITION`、`NORMAL`、`indices`、节点矩阵和基础 `baseColorFactor`
 - 支持根据 OBJ 包围盒自动居中、缩放模型
 - 支持没有显式 `camera` 时根据模型包围盒自动放置相机
 - 支持 `scale` 和 `translate` 两个基础变换；在 `auto_fit` 下它们会作为自动适配后的额外调整
@@ -195,7 +198,7 @@ open out.png
 ```json
 {
     "type": "mesh",
-    "obj": "../models/mark.obj",
+    "obj": "../models/obj/mark.obj",
     "auto_fit": true,
     "fit_size": 3.0,
     "fit_center": [0, 0, 0],

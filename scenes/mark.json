@@ -18,7 +18,7 @@
         },
         {
             "type": "mesh",
-            "obj": "../models/mark.obj",
+            "obj": "../models/obj/mark.obj",
             "auto_fit": true,
             "fit_size": 3.0,
             "fit_center": [0, 0, 0],

@@ -4,6 +4,7 @@
 
 #include "raytracer/scene/json.h"
 #include "raytracer/scene/obj.h"
+#include "raytracer/scene/glb.h"
 #include "raytracer/math/vec3.h"
 #include "raytracer/render/camera.h"
 #include "raytracer/geometry/hittable.h"
@@ -12,7 +13,9 @@
 #include "raytracer/geometry/triangle.h"
 #include "raytracer/geometry/bvh.h"
 #include "raytracer/material/material.h"
+#include <algorithm>
 #include <cmath>
+#include <cctype>
 #include <filesystem>
 #include <memory>
 #include <vector>
@@ -37,7 +40,7 @@ struct Scene {
 };
 
 struct SceneLoadOptions {
-    std::string obj_override;
+    std::string model_override;
 };
 
 inline Vec3 to_vec3(const JsonValue& arr) {
@@ -91,6 +94,42 @@ inline Material* ensure_material(const JsonValue& obj, Scene& scene) {
     fallback.objVal["type"] = type;
     fallback.objVal["albedo"] = albedo;
     return parse_material(fallback, scene);
+}
+
+inline std::string lower_ext(const std::string& path) {
+    std::string ext = std::filesystem::path(path).extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return ext;
+}
+
+inline ObjMeshData load_model_mesh(const std::string& path) {
+    std::string ext = lower_ext(path);
+    if (ext == ".obj") return load_obj_mesh(path);
+    if (ext == ".glb") return load_glb_mesh(path);
+    throw std::runtime_error("Unsupported model format: " + ext + " (" + path + ")");
+}
+
+inline ObjMeshData transform_mesh(const ObjMeshData& input,
+                                  double scale,
+                                  const Vec3& translate) {
+    ObjMeshData output = input;
+    bool first = true;
+    AABB box;
+
+    for (ObjTriangleData& tri : output.triangles) {
+        tri.v0 = scale * tri.v0 + translate;
+        tri.v1 = scale * tri.v1 + translate;
+        tri.v2 = scale * tri.v2 + translate;
+
+        AABB tri_box;
+        Triangle(tri.v0, tri.v1, tri.v2).bounding_box(tri_box);
+        box = first ? tri_box : AABB::surrounding_box(box, tri_box);
+        first = false;
+    }
+
+    output.bounds = box;
+    return output;
 }
 
 inline bool get_bool(const JsonValue& obj, const std::string& key, bool fallback) {
@@ -202,8 +241,8 @@ inline void load_scene(const std::string& path,
                 scene.objects.push_back(std::move(sph));
             } else if (type == "mesh") {
                 std::string obj_source;
-                if (!options.obj_override.empty()) {
-                    obj_source = options.obj_override;
+                if (!options.model_override.empty()) {
+                    obj_source = options.model_override;
                 } else if (obj.has("obj")) {
                     obj_source = obj.at("obj").strVal;
                 } else if (obj.has("path")) {
@@ -213,8 +252,7 @@ inline void load_scene(const std::string& path,
                 }
 
                 std::string obj_path = resolve_asset_path(scene_dir, obj_source);
-                Material* mat = ensure_material(obj, scene);
-                ObjMeshData raw_mesh = load_obj_mesh(obj_path);
+                ObjMeshData raw_mesh = load_model_mesh(obj_path);
 
                 bool auto_fit = get_bool(obj, "auto_fit", !(obj.has("scale") || obj.has("translate")));
                 double scale = obj.has("scale") ? obj.at("scale").numVal : 1.0;
@@ -225,22 +263,38 @@ inline void load_scene(const std::string& path,
                     Point3 fit_center = obj.has("fit_center") ? to_vec3(obj.at("fit_center")) : Point3(0, 0, 0);
                     double raw_size = raw_mesh.bounds.max_extent();
                     if (raw_size <= 1e-8) {
-                        throw std::runtime_error("OBJ bounds are too small: " + obj_path);
+                        throw std::runtime_error("Model bounds are too small: " + obj_path);
                     }
                     scale *= fit_size / raw_size;
                     translate = fit_center - scale * raw_mesh.bounds.center() + translate;
                 }
 
-                ObjMeshData mesh = load_obj_mesh(obj_path, scale, translate);
+                ObjMeshData mesh = transform_mesh(raw_mesh, scale, translate);
                 add_mesh_bounds(scene, mesh.bounds);
 
+                Material* fallback_mat = ensure_material(obj, scene);
+                std::vector<Material*> embedded_materials;
+                if (!obj.has("material")) {
+                    for (const Color& albedo : mesh.material_albedos) {
+                        auto mat = std::make_unique<Lambertian>(albedo);
+                        embedded_materials.push_back(mat.get());
+                        scene.materials.push_back(std::move(mat));
+                    }
+                }
+
                 for (const ObjTriangleData& tri : mesh.triangles) {
+                    Material* tri_mat = fallback_mat;
+                    if (tri.material_index >= 0 &&
+                        static_cast<size_t>(tri.material_index) < embedded_materials.size()) {
+                        tri_mat = embedded_materials[tri.material_index];
+                    }
+
                     std::unique_ptr<Triangle> mesh_tri;
                     if (tri.has_normals) {
                         mesh_tri = std::make_unique<Triangle>(
-                            tri.v0, tri.v1, tri.v2, tri.n0, tri.n1, tri.n2, mat);
+                            tri.v0, tri.v1, tri.v2, tri.n0, tri.n1, tri.n2, tri_mat);
                     } else {
-                        mesh_tri = std::make_unique<Triangle>(tri.v0, tri.v1, tri.v2, mat);
+                        mesh_tri = std::make_unique<Triangle>(tri.v0, tri.v1, tri.v2, tri_mat);
                     }
                     scene.primitives.add(mesh_tri.get());
                     scene.objects.push_back(std::move(mesh_tri));

@@ -14,11 +14,13 @@ struct ObjTriangleData {
     Point3 v0, v1, v2;
     Vec3 n0, n1, n2;
     bool has_normals = false;
+    int material_index = -1;
 };
 
 struct ObjMeshData {
     std::vector<ObjTriangleData> triangles;
     AABB bounds;
+    std::vector<Color> material_albedos;
 };
 
 struct ObjFaceIndex {

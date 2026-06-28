@@ -30,7 +30,8 @@ Color ray_color(const Ray& r, const Hittable& world, int depth) {
 void print_usage(const char* prog) {
     std::cerr << "Usage: " << prog << " [options]\n"
               << "  --scene <path>     scene JSON file (default: scenes/default.json)\n"
-              << "  --obj <path>       OBJ model path (uses scenes/obj.json if --scene is omitted)\n"
+              << "  --model <path>     OBJ/GLB model path (uses scenes/obj.json if --scene is omitted)\n"
+              << "  --obj <path>       alias of --model\n"
               << "  --out <path>       output PPM file (overrides scene)\n"
               << "  --samples <n>      samples per pixel (overrides scene)\n";
 }
@@ -39,7 +40,7 @@ int main(int argc, char* argv[]) {
     std::string scene_path = "scenes/default.json";
     bool scene_specified = false;
     std::string out_override;
-    std::string obj_override;
+    std::string model_override;
     int samples_override = -1;
 
     for (int i = 1; i < argc; i++) {
@@ -47,8 +48,8 @@ int main(int argc, char* argv[]) {
         if (arg == "--scene" && i + 1 < argc) {
             scene_path = argv[++i];
             scene_specified = true;
-        } else if (arg == "--obj" && i + 1 < argc) {
-            obj_override = argv[++i];
+        } else if ((arg == "--model" || arg == "--obj") && i + 1 < argc) {
+            model_override = argv[++i];
         } else if (arg == "--out" && i + 1 < argc) {
             out_override = argv[++i];
         } else if (arg == "--samples" && i + 1 < argc) {
@@ -63,17 +64,17 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    if (!obj_override.empty() && !scene_specified) {
+    if (!model_override.empty() && !scene_specified) {
         scene_path = "scenes/obj.json";
     }
 
     SceneLoadOptions load_options;
-    if (!obj_override.empty()) {
-        std::filesystem::path obj_path(obj_override);
-        if (obj_path.is_relative()) {
-            obj_path = std::filesystem::absolute(obj_path);
+    if (!model_override.empty()) {
+        std::filesystem::path model_path(model_override);
+        if (model_path.is_relative()) {
+            model_path = std::filesystem::absolute(model_path);
         }
-        load_options.obj_override = obj_path.lexically_normal().string();
+        load_options.model_override = model_path.lexically_normal().string();
     }
 
     Scene scene;
@@ -88,7 +89,7 @@ int main(int argc, char* argv[]) {
     if (samples_override > 0)  scene.samples = samples_override;
 
     std::cout << "Scene: " << scene_path << "\n"
-              << "OBJ: " << (obj_override.empty() ? "(scene)" : load_options.obj_override) << "\n"
+              << "Model: " << (model_override.empty() ? "(scene)" : load_options.model_override) << "\n"
               << "Image: " << scene.width << "x" << scene.height
               << ", samples=" << scene.samples
               << ", depth=" << scene.max_depth << "\n"
