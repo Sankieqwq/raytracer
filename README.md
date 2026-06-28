@@ -215,6 +215,46 @@ open out.png
 
 后续阶段（12/14）将复用此线性结构与栈遍历逻辑实现 GPU BVH。
 
+## PBR 材质与纹理（阶段 11）
+
+支持物理合理的金属-粗糙度着色模型。
+
+### 材质类型
+
+| 类型 | 字段 | 说明 |
+|------|------|------|
+| `lambertian` | `albedo` | 漫反射（保留） |
+| `metal` | `albedo`, `fuzz` | 金属反射（保留） |
+| `dielectric` | `ior` | 玻璃/水（保留） |
+| `pbr` | `albedo`/`metallic`/`roughness` + 各 `_map` + `normal_map` | Cook-Torrance BRDF |
+| `emissive` | `emission` | 自发光（面光源） |
+
+### PBR 示例
+
+```json
+{
+    "type": "pbr",
+    "albedo": [0.8, 0.2, 0.2],
+    "albedo_map": "../textures/checkerboard.png",
+    "metallic": 1.0,
+    "roughness": 0.05,
+    "normal_map": "../textures/normal.png"
+}
+```
+
+- 标量值（`albedo`/`metallic`/`roughness`）为默认，`_map` 字段加载贴图覆盖
+- `normal_map` 通过切线空间（TBN）扰动法线
+- BRDF：Cook-Torrance（GGX 法线分布 + Smith 几何项 + Fresnel-Schlick）
+- 采样：GGX 重要性采样，提高收敛速度
+
+### 自发光
+
+```json
+{ "type": "emissive", "emission": [8, 8, 8] }
+```
+
+`emission` 值可 >1，作为面光源参与全局光照。
+
 ## 项目结构
 
 ```
@@ -285,7 +325,8 @@ A 数学库
 - ✅ 阶段 8：三角形与三角网格求交（Möller–Trumbore + UV 插值 + SoA 网格）
 - ✅ 阶段 9：OBJ 模型加载与变换（tinyobjloader + 4x4 矩阵 + 平滑法线）
 - ✅ 阶段 10：BVH 线性化加速（扁平节点 + 栈遍历，GPU 友好）
-- ⬜ 后续：PBR 材质、CUDA 移植
+- ✅ 阶段 11：PBR 材质 + 纹理 + 自发光（Cook-Torrance + GGX 重要性采样）
+- ⬜ 后续：CUDA 移植
 
 ## 渲染原理速览
 
