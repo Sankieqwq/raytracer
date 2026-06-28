@@ -153,19 +153,44 @@ open out.png
 | `scenes/three_balls.json` | 漫反射 + 玻璃 + 金属 三球场景　　 |
 | `scenes/mark.json`　　　　| 加载 `models/mark.obj` 的网格场景 |
 | `scenes/triangle_test.json` | 三角形 + 三角网格（验证 UV 插值） |
+| `scenes/bunny_test.json` | OBJ 网格 + 变换（mark.obj） |
+| `scenes/no_normal_obj.json` | 无法线 OBJ + 平滑法线 |
 
 ## OBJ 网格支持
 
 当前版本已支持在场景 JSON 中通过 `mesh` 对象加载 Wavefront OBJ 模型，并输出渲染图片。
-当前范围刻意保持最小：
 
-- 支持 `v`、`vn`、`f`
-- 支持三角形、四边形和一般多边形面，内部会自动扇形拆分为三角形
-- 支持 `v` / `v//vn` / `v/vt/vn` 等常见面索引格式
-- 支持 `scale` 和 `translate` 两个基础变换
-- 暂不解析 `mtl`、纹理贴图和旋转变换
+- 加载器：[tinyobjloader](https://github.com/tinyobjloader/tinyobjloader)（单头文件，位于 `third_party/`），加载失败时自动降级到内置手写解析器
+- 支持 `v`、`vn`、`vt`、`f`，三角化任意多边形面
+- 缺法线时自动按面积加权计算平滑法线
+- `mesh` 对象字段：`file`/`obj`/`path`（任一）+ `transform` + `material`
 
-示例：
+### 变换（阶段 9）
+
+`transform` 块包含可选的 `translate`/`rotate`/`rotate_axis`/`scale`，按 SRT 顺序（先缩放，再旋转，最后平移）烘焙到顶点：
+
+```json
+{
+    "type": "mesh",
+    "file": "../models/mark.obj",
+    "transform": {
+        "translate": [-0.5, 0, 0],
+        "rotate": [0, 180, 0],
+        "rotate_axis": { "axis": [0, 1, 0], "angle": 45 },
+        "scale": 0.2
+    },
+    "material": { "type": "lambertian", "albedo": [0.8, 0.6, 0.2] }
+}
+```
+
+- `translate`: `[x, y, z]` 平移
+- `rotate`: `[rx, ry, rz]` 欧拉角（度），XYZ 顺序
+- `rotate_axis`: `{axis: [x,y,z], angle: 度数}` 轴角旋转（在 `rotate` 之前应用）
+- `scale`: 数值（统一缩放）或 `[sx, sy, sz]`（非统一缩放）
+
+### 向后兼容
+
+旧字段 `obj` + 顶层 `scale` + 顶层 `translate` 仍然可用（仅支持缩放和平移，无旋转）。示例：
 
 ```json
 {
@@ -173,10 +198,7 @@ open out.png
     "obj": "../models/mark.obj",
     "scale": 0.18,
     "translate": [-0.462, -0.052, 0.0],
-    "material": {
-        "type": "lambertian",
-        "albedo": [0.75, 0.2, 0.2]
-    }
+    "material": { "type": "lambertian", "albedo": [0.75, 0.2, 0.2] }
 }
 ```
 
@@ -248,6 +270,7 @@ A 数学库
 - ✅ 阶段 6：材质系统（Lambert / Metal / Dielectric 全部完成）
 - ✅ 阶段 7：场景文件化（JSON 场景 + 命令行参数）
 - ✅ 阶段 8：三角形与三角网格求交（Möller–Trumbore + UV 插值 + SoA 网格）
+- ✅ 阶段 9：OBJ 模型加载与变换（tinyobjloader + 4x4 矩阵 + 平滑法线）
 - ⬜ 后续：BVH 线性化、PBR 材质、CUDA 移植
 
 ## 渲染原理速览
