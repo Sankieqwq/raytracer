@@ -51,6 +51,12 @@ g++ -std=c++17 -O2 -Wall -Wextra -Iinclude -o raytracer src/main.cpp
 # 直接指定 OBJ/GLB 模型，未指定 --scene 时默认使用 scenes/obj.json 作为通用模板
 ./run.sh --model models/obj/mark.obj --out mark.ppm
 ./run.sh --model models/glb/toyota_mark_ii_jzx100.glb --out car.ppm
+
+# 快速清晰预览：关闭随机递归反弹，只保留直接光照和阴影
+./run.sh --preview --model models/glb/toyota_mark_ii_jzx100.glb --out car_preview.ppm
+
+# 也可以保留指定采样数，只关闭递归随机反弹
+./run.sh --direct-only --model models/glb/toyota_mark_ii_jzx100.glb --samples 8 --out car_direct.ppm
 ```
 
 命令行参数：
@@ -62,6 +68,8 @@ g++ -std=c++17 -O2 -Wall -Wextra -Iinclude -o raytracer src/main.cpp
 | `--obj <path>` | `--model` 的兼容别名 | 未指定时使用场景配置 |
 | `--out <path>` | 输出 PPM 文件（覆盖场景配置） | 场景中的 `output` |
 | `--samples <n>` | 每像素采样数（覆盖场景配置） | 场景中的 `samples` |
+| `--direct-only` | 只计算直接光照、阴影和环境光，关闭递归随机反弹以减少噪声 | 关闭 |
+| `--preview` | 快速预览模式：启用 `--direct-only`，且未指定 `--samples` 时使用 1 sample | 关闭 |
 | `--help` | 显示帮助 | — |
 
 ### 预览

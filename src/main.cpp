@@ -11,6 +11,11 @@
 #include <iostream>
 #include <string>
 
+struct RenderOptions {
+    bool direct_only = false;
+    bool preview = false;
+};
+
 bool is_shadowed(const Hittable& world, const Ray& shadow_ray, double max_t) {
     HitRecord shadow_rec;
     return world.hit(shadow_ray, 0.001, max_t, shadow_rec);
@@ -49,16 +54,18 @@ Color direct_lighting(const HitRecord& rec, const Scene& scene) {
     return result;
 }
 
-Color ray_color(const Ray& r, const Scene& scene, int depth) {
+Color ray_color(const Ray& r, const Scene& scene, int depth, const RenderOptions& options) {
     if (depth <= 0) return Color(0, 0, 0);
 
     HitRecord rec;
     if (scene.world->hit(r, 0.001, infinity, rec)) {
         Color direct = direct_lighting(rec, scene);
+        if (options.direct_only) return direct;
+
         Ray scattered;
         Color attenuation;
         if (rec.material && rec.material->scatter(r, rec, attenuation, scattered))
-            return direct + 0.35 * attenuation * ray_color(scattered, scene, depth - 1);
+            return direct + 0.35 * attenuation * ray_color(scattered, scene, depth - 1, options);
         return direct;
     }
 
@@ -73,7 +80,9 @@ void print_usage(const char* prog) {
               << "  --model <path>     OBJ/GLB model path (uses scenes/obj.json if --scene is omitted)\n"
               << "  --obj <path>       alias of --model\n"
               << "  --out <path>       output PPM file (overrides scene)\n"
-              << "  --samples <n>      samples per pixel (overrides scene)\n";
+              << "  --samples <n>      samples per pixel (overrides scene)\n"
+              << "  --direct-only      disable recursive random bounces, use direct light + shadows only\n"
+              << "  --preview          fast preview mode: direct-only and samples=1 unless overridden\n";
 }
 
 int main(int argc, char* argv[]) {
@@ -82,6 +91,7 @@ int main(int argc, char* argv[]) {
     std::string out_override;
     std::string model_override;
     int samples_override = -1;
+    RenderOptions render_options;
 
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
@@ -94,6 +104,11 @@ int main(int argc, char* argv[]) {
             out_override = argv[++i];
         } else if (arg == "--samples" && i + 1 < argc) {
             samples_override = std::stoi(argv[++i]);
+        } else if (arg == "--direct-only") {
+            render_options.direct_only = true;
+        } else if (arg == "--preview") {
+            render_options.preview = true;
+            render_options.direct_only = true;
         } else if (arg == "--help" || arg == "-h") {
             print_usage(argv[0]);
             return 0;
@@ -126,13 +141,18 @@ int main(int argc, char* argv[]) {
     }
 
     if (!out_override.empty()) scene.output = out_override;
-    if (samples_override > 0)  scene.samples = samples_override;
+    if (samples_override > 0)  {
+        scene.samples = samples_override;
+    } else if (render_options.preview) {
+        scene.samples = 1;
+    }
 
     std::cout << "Scene: " << scene_path << "\n"
               << "Model: " << (model_override.empty() ? "(scene)" : load_options.model_override) << "\n"
               << "Image: " << scene.width << "x" << scene.height
               << ", samples=" << scene.samples
-              << ", depth=" << scene.max_depth << "\n"
+              << ", depth=" << scene.max_depth
+              << ", mode=" << (render_options.direct_only ? "direct-only" : "path-tracing") << "\n"
               << "Primitives: " << scene.primitive_count << "\n";
 
     std::vector<Color> pixels(scene.width * scene.height);
@@ -148,9 +168,11 @@ int main(int argc, char* argv[]) {
         for (int i = 0; i < scene.width; i++) {
             Color col(0, 0, 0);
             for (int s = 0; s < scene.samples; s++) {
-                double u = (i + random_double()) / (scene.width - 1);
-                double v = (sample_row + random_double()) / (scene.height - 1);
-                col += ray_color(scene.camera->get_ray(u, v), scene, scene.max_depth);
+                double offset_x = (render_options.direct_only && scene.samples == 1) ? 0.5 : random_double();
+                double offset_y = (render_options.direct_only && scene.samples == 1) ? 0.5 : random_double();
+                double u = (i + offset_x) / (scene.width - 1);
+                double v = (sample_row + offset_y) / (scene.height - 1);
+                col += ray_color(scene.camera->get_ray(u, v), scene, scene.max_depth, render_options);
             }
             pixels[j * scene.width + i] = col;
         }
