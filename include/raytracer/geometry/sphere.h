@@ -43,7 +43,7 @@ public:
         rec.u = phi / (2 * pi);
         rec.v = theta / pi;
         // Tangent: along longitude (dp/du direction)
-        rec.tangent = Vec3(-outward.z, 0, outward.x).normalized();
+        rec.tangent = safe_tangent_from_candidate(Vec3(-outward.z, 0, outward.x), rec.normal);
         rec.has_tangent = true;
         rec.material = material;
         return true;

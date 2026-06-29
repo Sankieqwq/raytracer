@@ -48,37 +48,41 @@ inline Vec2 to_vec2(const JsonValue& arr) {
 }
 
 inline Mat4 parse_transform(const JsonValue& obj) {
-    Mat4 M = Mat4::identity();
     if (obj.has("transform")) {
         const JsonValue& t = obj.at("transform");
+        Mat4 scale = Mat4::identity();
+        Mat4 rotate_axis = Mat4::identity();
+        Mat4 rotate_euler = Mat4::identity();
+        Mat4 translate = Mat4::identity();
+
         if (t.has("scale")) {
             const JsonValue& s = t.at("scale");
             if (s.isArray() && s.arrVal.size() == 3)
-                M = M * Mat4::scale(s.arrVal[0].numVal, s.arrVal[1].numVal, s.arrVal[2].numVal);
+                scale = Mat4::scale(s.arrVal[0].numVal, s.arrVal[1].numVal, s.arrVal[2].numVal);
             else
-                M = M * Mat4::scale(s.numVal, s.numVal, s.numVal);
+                scale = Mat4::scale(s.numVal, s.numVal, s.numVal);
         }
         if (t.has("rotate_axis")) {
             const JsonValue& ra = t.at("rotate_axis");
             Vec3 axis = to_vec3(ra.at("axis"));
             double angle = ra.at("angle").numVal;
-            M = M * Mat4::rotate_axis(axis, angle);
+            rotate_axis = Mat4::rotate_axis(axis, angle);
         }
         if (t.has("rotate")) {
             Vec3 r = to_vec3(t.at("rotate"));
             // XYZ order: apply X first, then Y, then Z  =>  M = M * Rz * Ry * Rx
-            M = M * Mat4::rotate_z(r.z) * Mat4::rotate_y(r.y) * Mat4::rotate_x(r.x);
+            rotate_euler = Mat4::rotate_z(r.z) * Mat4::rotate_y(r.y) * Mat4::rotate_x(r.x);
         }
         if (t.has("translate")) {
             Vec3 tr = to_vec3(t.at("translate"));
-            M = M * Mat4::translate(tr.x, tr.y, tr.z);
+            translate = Mat4::translate(tr.x, tr.y, tr.z);
         }
+        return translate * rotate_axis * rotate_euler * scale;
     } else {
         double s = obj.has("scale") ? obj.at("scale").numVal : 1.0;
         Vec3 tr = obj.has("translate") ? to_vec3(obj.at("translate")) : Vec3(0, 0, 0);
-        M = Mat4::translate(tr.x, tr.y, tr.z) * Mat4::scale(s, s, s);
+        return Mat4::translate(tr.x, tr.y, tr.z) * Mat4::scale(s, s, s);
     }
-    return M;
 }
 
 inline Material* parse_material(const JsonValue& m, Scene& scene,

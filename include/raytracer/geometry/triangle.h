@@ -95,11 +95,9 @@ public:
             Vec3 edge2 = v2 - v0;
             if (std::fabs(det) > 1e-10) {
                 double inv = 1.0 / det;
-                rec.tangent = (inv * (dv2 * edge1 - dv1 * edge2)).normalized();
+                rec.tangent = safe_tangent_from_candidate(inv * (dv2 * edge1 - dv1 * edge2), rec.normal);
             } else {
-                rec.tangent = cross(Vec3(0, 1, 0), outward_normal).normalized();
-                if (rec.tangent.length_squared() < 1e-10)
-                    rec.tangent = cross(Vec3(1, 0, 0), outward_normal).normalized();
+                rec.tangent = orthonormal_tangent(rec.normal);
             }
             rec.has_tangent = true;
         }

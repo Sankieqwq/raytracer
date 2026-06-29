@@ -116,9 +116,9 @@ public:
         double G =  (b*f - c*e);
         double H = -(a*f - c*d);
         double I =  (a*e - b*d);
-        return Vec3(A*n.x + D*n.y + G*n.z,
-                    B*n.x + E*n.y + H*n.z,
-                    C*n.x + F*n.y + I*n.z);
+        return Vec3(A*n.x + B*n.y + C*n.z,
+                    D*n.x + E*n.y + F*n.z,
+                    G*n.x + H*n.y + I*n.z);
     }
 };
 

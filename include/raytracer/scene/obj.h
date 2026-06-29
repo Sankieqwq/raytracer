@@ -126,61 +126,80 @@ inline TriangleMesh load_obj_mesh(const std::string& path, const Mat4& transform
         throw std::runtime_error("tinyobjloader failed: " + err + " " + warn);
     }
 
-    const bool has_vn = !attrib.normals.empty();
-    const bool has_vt = !attrib.texcoords.empty();
-
-    // Smooth normals accumulator (only if missing vn)
-    std::vector<Vec3> smooth_normals;
-    if (!has_vn) {
-        smooth_normals.assign(attrib.vertices.size() / 3, Vec3(0, 0, 0));
-        // First pass: accumulate area-weighted face normals per vertex
-        for (const auto& shape : shapes) {
-            size_t idx_offset = 0;
-            for (size_t f = 0; f < shape.mesh.num_face_vertices.size(); f++) {
-                int fv = shape.mesh.num_face_vertices[f];
-                if (fv < 3) { idx_offset += fv; continue; }
-                tinyobj::index_t i0 = shape.mesh.indices[idx_offset + 0];
-                tinyobj::index_t i1 = shape.mesh.indices[idx_offset + 1];
-                tinyobj::index_t i2 = shape.mesh.indices[idx_offset + 2];
-                Vec3 p0(attrib.vertices[3*i0.vertex_index + 0],
-                        attrib.vertices[3*i0.vertex_index + 1],
-                        attrib.vertices[3*i0.vertex_index + 2]);
-                Vec3 p1(attrib.vertices[3*i1.vertex_index + 0],
-                        attrib.vertices[3*i1.vertex_index + 1],
-                        attrib.vertices[3*i1.vertex_index + 2]);
-                Vec3 p2(attrib.vertices[3*i2.vertex_index + 0],
-                        attrib.vertices[3*i2.vertex_index + 1],
-                        attrib.vertices[3*i2.vertex_index + 2]);
-                Vec3 face_n = cross(p1 - p0, p2 - p0);
-                double area = 0.5 * face_n.length();
-                face_n = face_n.normalized();
-                smooth_normals[i0.vertex_index] += area * face_n;
-                smooth_normals[i1.vertex_index] += area * face_n;
-                smooth_normals[i2.vertex_index] += area * face_n;
-                idx_offset += fv;
-            }
-        }
-        for (auto& n : smooth_normals) {
-            if (n.length_squared() < 1e-12) n = Vec3(0, 1, 0);
-            else n = n.normalized();
-        }
-    }
-
     TriangleMesh mesh;
 
     auto get_pos = [&](const tinyobj::index_t& idx) {
+        if (idx.vertex_index < 0 ||
+            static_cast<size_t>(3 * idx.vertex_index + 2) >= attrib.vertices.size()) {
+            throw std::runtime_error("OBJ vertex index out of range: " + path);
+        }
         return Vec3(attrib.vertices[3*idx.vertex_index + 0],
                     attrib.vertices[3*idx.vertex_index + 1],
                     attrib.vertices[3*idx.vertex_index + 2]);
+    };
+    auto has_normal = [&](const tinyobj::index_t& idx) {
+        return idx.normal_index >= 0 &&
+               static_cast<size_t>(3 * idx.normal_index + 2) < attrib.normals.size();
     };
     auto get_normal = [&](const tinyobj::index_t& idx) {
         return Vec3(attrib.normals[3*idx.normal_index + 0],
                     attrib.normals[3*idx.normal_index + 1],
                     attrib.normals[3*idx.normal_index + 2]);
     };
+    auto has_uv = [&](const tinyobj::index_t& idx) {
+        return idx.texcoord_index >= 0 &&
+               static_cast<size_t>(2 * idx.texcoord_index + 1) < attrib.texcoords.size();
+    };
     auto get_uv = [&](const tinyobj::index_t& idx) {
         return Vec2(attrib.texcoords[2*idx.texcoord_index + 0],
                     attrib.texcoords[2*idx.texcoord_index + 1]);
+    };
+
+    std::vector<Vec3> smooth_normals(attrib.vertices.size() / 3, Vec3(0, 0, 0));
+    bool any_uv = false;
+    for (const auto& shape : shapes) {
+        size_t idx_offset = 0;
+        for (size_t f = 0; f < shape.mesh.num_face_vertices.size(); f++) {
+            int fv = shape.mesh.num_face_vertices[f];
+            for (int k = 1; k + 1 < fv; k++) {
+                tinyobj::index_t idx0 = shape.mesh.indices[idx_offset + 0];
+                tinyobj::index_t idxk = shape.mesh.indices[idx_offset + k];
+                tinyobj::index_t idxk1 = shape.mesh.indices[idx_offset + k + 1];
+
+                Vec3 p0 = get_pos(idx0);
+                Vec3 p1 = get_pos(idxk);
+                Vec3 p2 = get_pos(idxk1);
+                Vec3 face_n = cross(p1 - p0, p2 - p0);
+                if (face_n.length_squared() > 1e-20) {
+                    smooth_normals[idx0.vertex_index] += face_n;
+                    smooth_normals[idxk.vertex_index] += face_n;
+                    smooth_normals[idxk1.vertex_index] += face_n;
+                }
+                any_uv = any_uv || has_uv(idx0) || has_uv(idxk) || has_uv(idxk1);
+            }
+            idx_offset += fv;
+        }
+    }
+    for (auto& n : smooth_normals) {
+        if (n.length_squared() < 1e-12) n = Vec3(0, 1, 0);
+        else n = n.normalized();
+    }
+
+    auto generated_normal = [&](const tinyobj::index_t& idx) {
+        if (idx.vertex_index >= 0 &&
+            static_cast<size_t>(idx.vertex_index) < smooth_normals.size()) {
+            return smooth_normals[idx.vertex_index];
+        }
+        return Vec3(0, 1, 0);
+    };
+
+    auto baked_normal = [&](const tinyobj::index_t& idx) {
+        Vec3 n = has_normal(idx) ? get_normal(idx) : generated_normal(idx);
+        return transform.transform_normal(n).normalized();
+    };
+
+    auto safe_uv = [&](const tinyobj::index_t& idx) {
+        return has_uv(idx) ? get_uv(idx) : Vec2(0, 0);
     };
 
     for (const auto& shape : shapes) {
@@ -199,20 +218,14 @@ inline TriangleMesh load_obj_mesh(const std::string& path, const Mat4& transform
                 mesh.indices.push_back(static_cast<int>(mesh.vertices.size()) - 2);
                 mesh.indices.push_back(static_cast<int>(mesh.vertices.size()) - 1);
 
-                if (has_vn) {
-                    mesh.normals.push_back(transform.transform_normal(get_normal(idx0)).normalized());
-                    mesh.normals.push_back(transform.transform_normal(get_normal(idxk)).normalized());
-                    mesh.normals.push_back(transform.transform_normal(get_normal(idxk1)).normalized());
-                } else {
-                    mesh.normals.push_back(transform.transform_normal(smooth_normals[idx0.vertex_index]).normalized());
-                    mesh.normals.push_back(transform.transform_normal(smooth_normals[idxk.vertex_index]).normalized());
-                    mesh.normals.push_back(transform.transform_normal(smooth_normals[idxk1.vertex_index]).normalized());
-                }
+                mesh.normals.push_back(baked_normal(idx0));
+                mesh.normals.push_back(baked_normal(idxk));
+                mesh.normals.push_back(baked_normal(idxk1));
 
-                if (has_vt) {
-                    mesh.uvs.push_back(get_uv(idx0));
-                    mesh.uvs.push_back(get_uv(idxk));
-                    mesh.uvs.push_back(get_uv(idxk1));
+                if (any_uv) {
+                    mesh.uvs.push_back(safe_uv(idx0));
+                    mesh.uvs.push_back(safe_uv(idxk));
+                    mesh.uvs.push_back(safe_uv(idxk1));
                 }
             }
             idx_offset += fv;
