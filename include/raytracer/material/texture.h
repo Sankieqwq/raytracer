@@ -16,6 +16,11 @@
 #include <utility>
 #include <vector>
 
+typedef unsigned char stbi_uc;
+extern stbi_uc* stbi_load(const char* filename, int* x, int* y, int* channels_in_file, int desired_channels);
+extern stbi_uc* stbi_load_from_memory(const stbi_uc* buffer, int len, int* x, int* y, int* channels_in_file, int desired_channels);
+extern void stbi_image_free(void* retval_from_stbi_load);
+
 class Texture {
 public:
     virtual ~Texture() = default;
@@ -169,26 +174,42 @@ private:
         }
     }
 
-    void load_with_sips(const std::string& path) {
-        std::string out = temp_path(".ppm");
-        std::string command = "sips -s format ppm " + shell_quote(path) +
-                              " --out " + shell_quote(out) + " >/dev/null 2>&1";
-        int code = std::system(command.c_str());
-        if (code != 0) {
-            std::filesystem::remove(out);
-            throw std::runtime_error("Failed to decode texture with sips: " + path);
+    void load_stb_pixels(stbi_uc* data, int w, int h, const std::string& source) {
+        if (!data) throw std::runtime_error("Failed to decode texture image: " + source);
+        width = w;
+        height = h;
+        pixels.clear();
+        pixels.reserve(static_cast<size_t>(width) * static_cast<size_t>(height));
+        for (size_t i = 0; i < static_cast<size_t>(width) * static_cast<size_t>(height) * 3; i += 3) {
+            pixels.push_back(Color(data[i] / 255.0, data[i + 1] / 255.0, data[i + 2] / 255.0));
         }
-        load_ppm(out);
-        std::filesystem::remove(out);
+        stbi_image_free(data);
+    }
+
+    void load_with_stb(const std::string& path) {
+        int w = 0, h = 0, channels = 0;
+        stbi_uc* data = stbi_load(path.c_str(), &w, &h, &channels, 3);
+        load_stb_pixels(data, w, h, path);
+    }
+
+    void load_with_stb(const std::vector<unsigned char>& encoded, const std::string& mime_type) {
+        int w = 0, h = 0, channels = 0;
+        stbi_uc* data = stbi_load_from_memory(encoded.data(), static_cast<int>(encoded.size()), &w, &h, &channels, 3);
+        load_stb_pixels(data, w, h, mime_type);
     }
 
     void load(const std::string& path) {
         std::string ext = lower_ext(path);
         if (ext == ".ppm" || ext == ".pnm") load_ppm(path);
-        else load_with_sips(path);
+        else load_with_stb(path);
     }
 
     void load(const std::vector<unsigned char>& encoded, const std::string& mime_type) {
+        if (mime_type != "image/x-portable-pixmap") {
+            load_with_stb(encoded, mime_type);
+            return;
+        }
+
         std::string source = temp_path(extension_for_mime(mime_type));
         {
             std::ofstream out(source, std::ios::binary);
@@ -197,8 +218,7 @@ private:
         }
 
         try {
-            if (mime_type == "image/x-portable-pixmap") load_ppm(source);
-            else load_with_sips(source);
+            load_ppm(source);
             std::filesystem::remove(source);
         } catch (...) {
             std::filesystem::remove(source);

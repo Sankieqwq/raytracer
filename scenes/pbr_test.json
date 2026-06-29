@@ -1,0 +1,32 @@
+{
+    "image": {
+        "width": 600, "height": 400, "samples": 32, "max_depth": 32,
+        "output": "pbr_test.ppm"
+    },
+    "camera": {
+        "lookfrom": [0, 0, 5], "lookat": [0, 0, 0], "vup": [0, 1, 0],
+        "vfov": 40, "aperture": 0.0, "focus_dist": 5.0
+    },
+    "objects": [
+        {
+            "type": "sphere", "center": [-1.5, 0, 0], "radius": 1,
+            "material": { "type": "pbr", "albedo": [0.8, 0.2, 0.2], "metallic": 1.0, "roughness": 0.05 }
+        },
+        {
+            "type": "sphere", "center": [0, 0, 0], "radius": 1,
+            "material": { "type": "pbr", "albedo": [0.7, 0.7, 0.7], "metallic": 0.5, "roughness": 0.4 }
+        },
+        {
+            "type": "sphere", "center": [1.5, 0, 0], "radius": 1,
+            "material": { "type": "pbr", "albedo": [0.2, 0.8, 0.2], "metallic": 0.0, "roughness": 0.8 }
+        },
+        {
+            "type": "sphere", "center": [0, 3, 0], "radius": 1,
+            "material": { "type": "emissive", "emission": [8, 8, 8] }
+        },
+        {
+            "type": "sphere", "center": [0, -100.5, 0], "radius": 100,
+            "material": { "type": "lambertian", "albedo": [0.3, 0.3, 0.3] }
+        }
+    ]
+}

@@ -13,11 +13,11 @@
 #include <string>
 #include <vector>
 
-struct Mat4 {
+struct GlbMat4 {
     std::array<double, 16> m;
 
-    static Mat4 identity() {
-        Mat4 r{{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}};
+    static GlbMat4 identity() {
+        GlbMat4 r{{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}};
         r.m[0] = r.m[5] = r.m[10] = r.m[15] = 1.0;
         return r;
     }
@@ -37,8 +37,8 @@ struct Mat4 {
     }
 };
 
-inline Mat4 multiply_mat4(const Mat4& a, const Mat4& b) {
-    Mat4 r{{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}};
+inline GlbMat4 multiply_mat4(const GlbMat4& a, const GlbMat4& b) {
+    GlbMat4 r{{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}};
     for (int col = 0; col < 4; col++) {
         for (int row = 0; row < 4; row++) {
             for (int k = 0; k < 4; k++) {
@@ -91,8 +91,8 @@ inline Vec3 glb_to_vec3(const JsonValue& arr) {
     return Vec3(arr.arrVal[0].numVal, arr.arrVal[1].numVal, arr.arrVal[2].numVal);
 }
 
-inline Mat4 mat4_from_node(const JsonValue& node) {
-    Mat4 local = Mat4::identity();
+inline GlbMat4 mat4_from_node(const JsonValue& node) {
+    GlbMat4 local = GlbMat4::identity();
     if (node.has("matrix")) {
         const auto& arr = node.at("matrix").arrVal;
         if (arr.size() != 16) throw std::runtime_error("GLB: node matrix must have 16 values");
@@ -301,10 +301,10 @@ inline LoadedMaterialData glb_material_data(const JsonValue& material) {
 
 inline void add_glb_mesh_node(const GlbContext& glb,
                               int node_index,
-                              const Mat4& parent_transform,
+                              const GlbMat4& parent_transform,
                               ObjMeshData& mesh) {
     const JsonValue& node = glb.root.at("nodes").arrVal.at(node_index);
-    Mat4 transform = multiply_mat4(parent_transform, mat4_from_node(node));
+    GlbMat4 transform = multiply_mat4(parent_transform, mat4_from_node(node));
 
     if (node.has("mesh")) {
         int mesh_index = static_cast<int>(node.at("mesh").numVal);
@@ -384,7 +384,7 @@ inline ObjMeshData load_glb_mesh(const std::string& path) {
     int scene_index = json_int(glb.root, "scene", 0);
     const JsonValue& scene = glb.root.at("scenes").arrVal.at(scene_index);
     for (const JsonValue& node : scene.at("nodes").arrVal) {
-        add_glb_mesh_node(glb, static_cast<int>(node.numVal), Mat4::identity(), mesh);
+        add_glb_mesh_node(glb, static_cast<int>(node.numVal), GlbMat4::identity(), mesh);
     }
 
     if (mesh.triangles.empty()) throw std::runtime_error("GLB contains no triangle primitives: " + path);

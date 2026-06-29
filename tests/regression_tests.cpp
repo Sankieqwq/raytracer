@@ -1,0 +1,180 @@
+#define TINYOBJLOADER_IMPLEMENTATION
+
+#include "raytracer/scene/scene.h"
+
+#include <cmath>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <string>
+#include <type_traits>
+
+namespace {
+
+int failures = 0;
+
+void check(bool condition, const std::string& message) {
+    if (!condition) {
+        std::cerr << "FAIL: " << message << "\n";
+        ++failures;
+    }
+}
+
+bool near(double a, double b, double eps = 1e-9) {
+    return std::fabs(a - b) <= eps;
+}
+
+bool near_vec(const Vec3& a, const Vec3& b, double eps = 1e-9) {
+    return near(a.x, b.x, eps) && near(a.y, b.y, eps) && near(a.z, b.z, eps);
+}
+
+bool finite_vec(const Vec3& v) {
+    return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z);
+}
+
+JsonValue number(double value) {
+    JsonValue v;
+    v.type = JsonValue::Number;
+    v.numVal = value;
+    return v;
+}
+
+JsonValue array3(double x, double y, double z) {
+    JsonValue v;
+    v.type = JsonValue::Array;
+    v.arrVal = {number(x), number(y), number(z)};
+    return v;
+}
+
+template <typename T, typename = void>
+struct has_acceleration_node_count : std::false_type {};
+
+template <typename T>
+struct has_acceleration_node_count<T, std::void_t<decltype(std::declval<const T&>().acceleration_node_count())>>
+    : std::true_type {};
+
+template <typename Mesh>
+void check_acceleration_node_count(const Mesh& mesh) {
+    if constexpr (has_acceleration_node_count<Mesh>::value) {
+        check(mesh.acceleration_node_count() > 1, "TriangleMesh should build internal triangle-level acceleration");
+    } else {
+        check(false, "TriangleMesh should expose internal acceleration node count for regression coverage");
+    }
+}
+
+void test_parse_transform_uses_srt_order() {
+    JsonValue obj;
+    obj.type = JsonValue::Object;
+    JsonValue transform;
+    transform.type = JsonValue::Object;
+    transform.objVal["scale"] = number(2.0);
+    transform.objVal["translate"] = array3(10.0, 0.0, 0.0);
+    obj.objVal["transform"] = transform;
+
+    Vec3 p = parse_transform(obj).transform_point(Vec3(1, 0, 0));
+    check(near_vec(p, Vec3(12, 0, 0)), "transform block must apply scale before translate without scaling translation");
+}
+
+void test_transform_normal_matches_rotation_direction() {
+    Mat4 r = Mat4::rotate_z(90);
+    Vec3 normal = r.transform_normal(Vec3(1, 0, 0)).normalized();
+    check(near_vec(normal, Vec3(0, 1, 0), 1e-9), "rotate_z(90) must rotate normals in the same direction as directions");
+}
+
+void test_sphere_pole_tangent_is_finite() {
+    Sphere sphere(Point3(0, 0, 0), 1.0, nullptr);
+    Ray ray(Point3(0, 2, 0), Vec3(0, -1, 0));
+    HitRecord rec;
+    check(sphere.hit(ray, 0.001, infinity, rec), "ray should hit sphere pole");
+    check(rec.has_tangent, "sphere hit should provide tangent");
+    check(finite_vec(rec.tangent) && rec.tangent.length_squared() > 0, "sphere pole tangent must be finite and non-zero");
+}
+
+void test_degenerate_triangle_uv_tangent_is_finite() {
+    Triangle tri(Point3(0, 0, 0), Point3(1, 0, 0), Point3(0, 0, -1),
+                 Vec3(0, 1, 0), Vec3(0, 1, 0), Vec3(0, 1, 0),
+                 Vec2(0, 0), Vec2(0, 0), Vec2(0, 0), nullptr);
+    Ray ray(Point3(0.25, 1, -0.25), Vec3(0, -1, 0));
+    HitRecord rec;
+    check(tri.hit(ray, 0.001, infinity, rec), "ray should hit degenerate-UV triangle");
+    check(rec.has_tangent, "triangle with UVs should provide tangent");
+    check(finite_vec(rec.tangent) && rec.tangent.length_squared() > 0, "degenerate triangle UV tangent must be finite and non-zero");
+}
+
+void test_degenerate_mesh_uv_tangent_is_finite() {
+    TriangleMesh mesh;
+    mesh.vertices = {Point3(0, 0, 0), Point3(1, 0, 0), Point3(0, 0, -1)};
+    mesh.indices = {0, 1, 2};
+    mesh.normals = {Vec3(0, 1, 0), Vec3(0, 1, 0), Vec3(0, 1, 0)};
+    mesh.uvs = {Vec2(0, 0), Vec2(0, 0), Vec2(0, 0)};
+    mesh.material_per_tri = {nullptr};
+
+    Ray ray(Point3(0.25, 1, -0.25), Vec3(0, -1, 0));
+    HitRecord rec;
+    check(mesh.hit(ray, 0.001, infinity, rec), "ray should hit degenerate-UV mesh");
+    check(rec.has_tangent, "mesh with UVs should provide tangent");
+    check(finite_vec(rec.tangent) && rec.tangent.length_squared() > 0, "degenerate mesh UV tangent must be finite and non-zero");
+}
+
+void test_obj_loader_handles_mixed_missing_attributes() {
+    std::filesystem::path path = std::filesystem::temp_directory_path() / "rt_mixed_attributes.obj";
+    {
+        std::ofstream out(path);
+        out << "v 0 0 0\n"
+            << "v 1 0 0\n"
+            << "v 0 1 0\n"
+            << "v 1 1 0\n"
+            << "vt 0 0\n"
+            << "vn 0 0 1\n"
+            << "f 1/1/1 2/1/1 3/1/1\n"
+            << "f 2 4 3\n";
+    }
+
+    TriangleMesh mesh = load_obj_mesh(path.string(), Mat4::identity());
+    std::filesystem::remove(path);
+
+    check(mesh.indices.size() == 6, "mixed-attribute OBJ should load two triangles");
+    check(mesh.vertices.size() == 6, "OBJ loader should expand mixed-attribute vertices per triangle");
+    check(mesh.normals.size() == mesh.vertices.size(), "OBJ loader should provide safe normal data for every expanded vertex");
+    check(mesh.uvs.empty() || mesh.uvs.size() == mesh.vertices.size(), "OBJ loader UV data must be empty or complete");
+}
+
+void test_triangle_mesh_exposes_internal_acceleration() {
+    TriangleMesh mesh;
+    for (int i = 0; i < 8; ++i) {
+        double x = static_cast<double>(i) * 2.0;
+        mesh.vertices.push_back(Point3(x, 0, 0));
+        mesh.vertices.push_back(Point3(x + 1, 0, 0));
+        mesh.vertices.push_back(Point3(x, 1, 0));
+        mesh.indices.push_back(i * 3 + 0);
+        mesh.indices.push_back(i * 3 + 1);
+        mesh.indices.push_back(i * 3 + 2);
+        mesh.material_per_tri.push_back(nullptr);
+    }
+
+    Ray ray(Point3(0.25, 0.25, 1), Vec3(0, 0, -1));
+    HitRecord rec;
+    check(mesh.hit(ray, 0.001, infinity, rec), "ray should hit accelerated mesh");
+
+    check_acceleration_node_count(mesh);
+}
+
+}  // namespace
+
+int main() {
+    test_parse_transform_uses_srt_order();
+    test_transform_normal_matches_rotation_direction();
+    test_sphere_pole_tangent_is_finite();
+    test_degenerate_triangle_uv_tangent_is_finite();
+    test_degenerate_mesh_uv_tangent_is_finite();
+    test_obj_loader_handles_mixed_missing_attributes();
+    test_triangle_mesh_exposes_internal_acceleration();
+
+    if (failures != 0) {
+        std::cerr << failures << " regression test(s) failed\n";
+        return 1;
+    }
+    std::cout << "All regression tests passed\n";
+    return 0;
+}

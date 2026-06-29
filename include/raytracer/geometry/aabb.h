@@ -45,6 +45,11 @@ public:
         return 2;
     }
 
+    double surface_area() const {
+        Vec3 d = maximum - minimum;
+        return 2.0 * (d.x * d.y + d.y * d.z + d.z * d.x);
+    }
+
     static AABB surrounding_box(const AABB& a, const AABB& b) {
         Point3 small(
             std::min(a.minimum.x, b.minimum.x),

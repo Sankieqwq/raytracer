@@ -1,0 +1,31 @@
+{
+    "image": {
+        "width": 400,
+        "height": 400,
+        "samples": 16,
+        "max_depth": 32,
+        "output": "bunny_test.ppm"
+    },
+    "camera": {
+        "lookfrom": [0, 0, 10],
+        "lookat": [0, 0, 0],
+        "vup": [0, 1, 0],
+        "vfov": 40,
+        "aperture": 0.0,
+        "focus_dist": 10.0
+    },
+    "objects": [
+        {
+            "type": "mesh",
+            "file": "../models/obj/mark.obj",
+            "transform": {
+                "rotate": [0, 180, 0],
+                "scale": 0.2
+            },
+            "material": {
+                "type": "lambertian",
+                "albedo": [0.8, 0.6, 0.2]
+            }
+        }
+    ]
+}

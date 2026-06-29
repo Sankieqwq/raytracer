@@ -1,4 +1,9 @@
 // Module D: main -- CLI + JSON scene loading + render loop
+#define TINYOBJLOADER_IMPLEMENTATION
+#include "tiny_obj_loader.h"
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
+
 #include "raytracer/math/vec3.h"
 #include "raytracer/render/image.h"
 #include "raytracer/math/util.h"
@@ -63,13 +68,14 @@ Color ray_color(const Ray& r, const Scene& scene, int depth, const RenderOptions
     HitRecord rec;
     if (scene.world->hit(r, 0.001, infinity, rec)) {
         Color direct = direct_lighting(rec, scene);
-        if (options.direct_only) return direct;
-
         Ray scattered;
-        Color attenuation;
-        if (rec.material && rec.material->scatter(r, rec, attenuation, scattered))
-            return direct + 0.35 * attenuation * ray_color(scattered, scene, depth - 1, options);
-        return direct;
+        Color attenuation, emission;
+        bool did_scatter = rec.material && rec.material->scatter(r, rec, attenuation, scattered, emission);
+        if (options.direct_only) return emission + direct;
+        if (did_scatter) {
+            return emission + direct + 0.35 * attenuation * ray_color(scattered, scene, depth - 1, options);
+        }
+        return emission + direct;
     }
 
     Vec3 unit_dir = r.direction.normalized();

@@ -161,13 +161,13 @@ open out.png
 
 **image**（均可选，有默认值）
 
-| 字段 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| `width` | int | 800 | 图像宽度 |
-| `height` | int | 400 | 图像高度 |
-| `samples` | int | 16 | 每像素采样数，越大越细腻、越慢 |
-| `max_depth` | int | 32 | 光线递归深度上限 |
-| `output` | string | `"out.ppm"` | 输出文件路径 |
+| 字段　　　　| 类型　 | 默认值　　　| 说明　　　　　　　　　　　　　 |
+| -------------| --------| -------------| --------------------------------|
+| `width`　　 | int　　| 800　　　　 | 图像宽度　　　　　　　　　　　 |
+| `height`　　| int　　| 400　　　　 | 图像高度　　　　　　　　　　　 |
+| `samples`　 | int　　| 16　　　　　| 每像素采样数，越大越细腻、越慢 |
+| `max_depth` | int　　| 32　　　　　| 光线递归深度上限　　　　　　　 |
+| `output`　　| string | `"out.ppm"` | 输出文件路径　　　　　　　　　 |
 
 **camera**（均可选，有默认值）
 
@@ -221,15 +221,17 @@ open out.png
 | `material` | object | 模型没有内嵌材质时使用的 fallback 材质，见下 |
 | `override_material` | bool | 为 true 时强制用 `material` 覆盖 GLB 内嵌材质 |
 
-**material.type** 支持三种：
+**material.type** 支持五种：
 
 | 类型 | 额外字段 | 说明 |
 |------|----------|------|
 | `"lambertian"` | `albedo`: [r,g,b], `texture`: string/object | 漫反射（哑光） |
 | `"metal"` | `albedo`: [r,g,b], `texture`: string/object, `fuzz`: 0~1 | 金属反射，fuzz=0 镜面，越大越粗糙 |
 | `"dielectric"` | `ior`: float | 玻璃/水等透明介质，ior=1.5 玻璃，1.33 水 |
+| `"pbr"` | `albedo`/`metallic`/`roughness` + 各 `_map` + `normal_map` | Cook-Torrance 金属-粗糙度材质 |
+| `"emissive"` | `emission`: [r,g,b] | 自发光材质，可作为面光源 |
 
-颜色 `albedo` 各分量范围 [0, 1]。`texture` 可以直接写图片路径，也可以写成 `{ "path": "..." }`。当前支持 PPM/PNM，PNG/JPG 会在 macOS 上通过 `sips` 转码后读取。
+颜色 `albedo` 各分量范围 [0, 1]。`texture` 可以直接写图片路径，也可以写成 `{ "path": "..." }`。当前支持 PPM/PNM，PNG/JPG 通过 `stb_image` 解码。
 
 ### 示例场景
 
@@ -239,27 +241,59 @@ open out.png
 | `scenes/three_balls.json` | 漫反射 + 玻璃 + 金属 三球场景 |
 | `scenes/obj.json` | 通用 OBJ/GLB 模型模板，配合 `--model` 使用 |
 | `scenes/mark.json` | 加载 `models/obj/mark.obj` 的网格场景 |
+| `scenes/triangle_test.json` | 三角形 + 三角网格（验证 UV 插值） |
+| `scenes/bunny_test.json` | OBJ 网格 + 变换验证 |
+| `scenes/no_normal_obj.json` | 无法线 OBJ + 平滑法线 |
+| `scenes/pbr_test.json` | PBR 金属-粗糙度材质验证 |
+| `scenes/texture_test.json` | 贴图采样验证 |
 | `scenes/textured_quad.json` | 带 UV 和棋盘纹理的最小贴图验证场景 |
 
 ## OBJ / GLB 网格支持
 
 当前版本已支持在场景 JSON 中通过 `mesh` 对象加载 Wavefront OBJ 或 GLB 模型，并输出渲染图片。
-当前范围刻意保持最小：
 
-- 支持 `v`、`vn`、`f`
+- 支持 OBJ `v`、`vn`、`vt`、`f`
 - 支持 OBJ `vt`，命中三角形时会插值 UV 并采样材质纹理
 - 支持三角形、四边形和一般多边形面，内部会自动扇形拆分为三角形
 - 支持 `v` / `v//vn` / `v/vt/vn` 等常见面索引格式
+- OBJ 缺法线时会按面积加权生成平滑法线；normal/UV 混合缺失时会补齐安全默认值
 - 支持 GLB 里的 `POSITION`、`NORMAL`、`TEXCOORD_0`、`indices` 和节点矩阵/TRS
 - 支持 GLB 基础材质：`baseColorFactor`、`metallicFactor`、`roughnessFactor`、透明度 alpha
 - 支持 GLB `baseColorTexture`，可读取内嵌 bufferView 图片或外部图片路径
 - GLB 材质会按 primitive 自动绑定到三角形；`material` 字段只作为 fallback，除非设置 `override_material: true`
-- 支持根据 OBJ 包围盒自动居中、缩放模型
+- 支持根据 OBJ/GLB 包围盒自动居中、缩放模型
 - 支持没有显式 `camera` 时根据模型包围盒自动放置相机
-- 支持 `scale` 和 `translate` 两个基础变换；在 `auto_fit` 下它们会作为自动适配后的额外调整
-- 暂不解析 `mtl` 和旋转变换；PNG/JPG 贴图解码依赖 macOS `sips`
+- 支持 `transform` 块中的平移、欧拉旋转、轴角旋转、统一/非统一缩放
+- 支持顶层 `scale` 和 `translate`；在 `auto_fit` 下它们会作为自动适配后的额外调整
+- 网格会合并为 `TriangleMesh`，内部构建三角形级 BVH 加速求交
+- 暂不解析 OBJ `mtl`；PNG/JPG 贴图通过 `stb_image` 解码
 
-示例：
+### 变换
+
+`transform` 块包含可选的 `translate`/`rotate`/`rotate_axis`/`scale`，按 SRT 顺序（先缩放，再旋转，最后平移）烘焙到顶点：
+
+```json
+{
+    "type": "mesh",
+    "file": "../models/obj/mark.obj",
+    "transform": {
+        "translate": [-0.5, 0, 0],
+        "rotate": [0, 180, 0],
+        "rotate_axis": { "axis": [0, 1, 0], "angle": 45 },
+        "scale": 0.2
+    },
+    "material": { "type": "lambertian", "albedo": [0.8, 0.6, 0.2] }
+}
+```
+
+- `translate`: `[x, y, z]` 平移
+- `rotate`: `[rx, ry, rz]` 欧拉角（度），XYZ 顺序
+- `rotate_axis`: `{axis: [x,y,z], angle: 度数}` 轴角旋转（在 `rotate` 之前应用）
+- `scale`: 数值（统一缩放）或 `[sx, sy, sz]`（非统一缩放）
+
+### 向后兼容
+
+旧字段 `obj` + 顶层 `scale` + 顶层 `translate` 仍然可用（仅支持缩放和平移，无旋转）。示例：
 
 ```json
 {
@@ -276,6 +310,57 @@ open out.png
     }
 }
 ```
+
+## BVH 加速结构
+
+场景图元超过 1 个时自动构建线性 BVH 加速射线求交。
+
+- **线性节点**：`LinearBVHNode` 为 POD 结构（AABB + 左右子索引 + 叶子图元起止），可直接 `memcpy` 到 GPU
+- **构建**：中点划分（按最长轴排序取中点），叶子粒度 1 图元
+- **遍历**：栈数组迭代（深度 64），与未来 GPU 栈遍历逻辑一致
+- **结果一致性**：因 `hit()` 取最近命中，遍历顺序变化不影响渲染结果
+
+后续阶段（12/14）将复用此线性结构与栈遍历逻辑实现 GPU BVH。
+
+## PBR 材质与纹理（阶段 11）
+
+支持物理合理的金属-粗糙度着色模型。
+
+### 材质类型
+
+| 类型 | 字段 | 说明 |
+|------|------|------|
+| `lambertian` | `albedo` | 漫反射（保留） |
+| `metal` | `albedo`, `fuzz` | 金属反射（保留） |
+| `dielectric` | `ior` | 玻璃/水（保留） |
+| `pbr` | `albedo`/`metallic`/`roughness` + 各 `_map` + `normal_map` | Cook-Torrance BRDF |
+| `emissive` | `emission` | 自发光（面光源） |
+
+### PBR 示例
+
+```json
+{
+    "type": "pbr",
+    "albedo": [0.8, 0.2, 0.2],
+    "albedo_map": "../textures/checkerboard.png",
+    "metallic": 1.0,
+    "roughness": 0.05,
+    "normal_map": "../textures/normal.png"
+}
+```
+
+- 标量值（`albedo`/`metallic`/`roughness`）为默认，`_map` 字段加载贴图覆盖
+- `normal_map` 通过切线空间（TBN）扰动法线
+- BRDF：Cook-Torrance（GGX 法线分布 + Smith 几何项 + Fresnel-Schlick）
+- 采样：GGX 重要性采样，提高收敛速度
+
+### 自发光
+
+```json
+{ "type": "emissive", "emission": [8, 8, 8] }
+```
+
+`emission` 值可 >1，作为面光源参与全局光照。
 
 ## 项目结构
 
@@ -329,7 +414,7 @@ A 数学库
 
 ## 接口契约（签名冻结，改接口需团队协商）
 
-- `HitRecord` 字段：`p / normal / t / front_face / Material*`
+- `HitRecord` 字段：`p / normal / t / u / v / front_face / Material*`（`u`/`v` 为纹理坐标，阶段 8 新增）
 - `Material*` 生命周期由 `Scene`（`scene.h`）通过 `unique_ptr` 持有，几何体只存裸指针
 - 颜色统一 RGB ∈ [0,1]，输出前由 `image.h` 做伽马 2.2 校正
 - 随机数统一走 `util.h` 的 `random_double()`，避免各写各的
@@ -344,7 +429,11 @@ A 数学库
 - ✅ 阶段 5：抗锯齿（多次采样平均）
 - ✅ 阶段 6：材质系统（Lambert / Metal / Dielectric 全部完成）
 - ✅ 阶段 7：场景文件化（JSON 场景 + 命令行参数）
-- ⬜ 后续：BVH 加速、三角形网格、多线程
+- ✅ 阶段 8：三角形与三角网格求交（Möller–Trumbore + UV 插值 + SoA 网格）
+- ✅ 阶段 9：OBJ 模型加载与变换（tinyobjloader + 4x4 矩阵 + 平滑法线）
+- ✅ 阶段 10：BVH 线性化加速（扁平节点 + 栈遍历，GPU 友好）
+- ✅ 阶段 11：PBR 材质 + 纹理 + 自发光（Cook-Torrance + GGX 重要性采样）
+- ⬜ 后续：CUDA 移植
 
 ## 渲染原理速览
 

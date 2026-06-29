@@ -1,19 +1,23 @@
-// Module C: material -- abstract + concrete
+// Module C: material -- abstract + concrete (Lambertian/Metal/Dielectric/PBR/Emissive)
 #ifndef RT_MATERIAL_H
 #define RT_MATERIAL_H
 
-#include "raytracer/math/ray.h"
-#include "raytracer/math/vec3.h"
 #include "raytracer/geometry/hittable.h"
 #include "raytracer/material/texture.h"
+#include "raytracer/math/ray.h"
+#include "raytracer/math/util.h"
+#include "raytracer/math/vec3.h"
+#include <algorithm>
 #include <cmath>
 #include <memory>
+#include <utility>
 
 class Material {
 public:
     virtual ~Material() = default;
     virtual bool scatter(const Ray& r_in, const HitRecord& rec,
-                         Color& attenuation, Ray& scattered) const = 0;
+                         Color& attenuation, Ray& scattered,
+                         Color& emission) const = 0;
     virtual Color base_color(const HitRecord& rec) const {
         (void)rec;
         return Color(0.8, 0.8, 0.8);
@@ -23,16 +27,21 @@ public:
 class Lambertian : public Material {
 public:
     std::shared_ptr<Texture> texture;
-    Lambertian(const Color& albedo) : texture(std::make_shared<SolidColorTexture>(albedo)) {}
-    explicit Lambertian(std::shared_ptr<Texture> texture) : texture(std::move(texture)) {}
+
+    explicit Lambertian(const Color& albedo)
+        : texture(std::make_shared<SolidColorTexture>(albedo)) {}
+    explicit Lambertian(std::shared_ptr<Texture> texture)
+        : texture(std::move(texture)) {}
 
     Color base_color(const HitRecord& rec) const override {
         return texture->value(rec.u, rec.v, rec.p);
     }
 
     bool scatter(const Ray& r_in, const HitRecord& rec,
-                 Color& attenuation, Ray& scattered) const override {
+                 Color& attenuation, Ray& scattered,
+                 Color& emission) const override {
         (void)r_in;
+        emission = Color(0, 0, 0);
         Vec3 dir = rec.normal + random_unit_vector();
         if (dir.length_squared() < 1e-8) dir = rec.normal;
         scattered = Ray(rec.p, dir);
@@ -45,17 +54,21 @@ class Metal : public Material {
 public:
     std::shared_ptr<Texture> texture;
     double fuzz;
+
     Metal(const Color& albedo, double fuzz = 0)
-        : texture(std::make_shared<SolidColorTexture>(albedo)), fuzz(fuzz < 1 ? fuzz : 1) {}
+        : texture(std::make_shared<SolidColorTexture>(albedo)),
+          fuzz(std::min(fuzz, 1.0)) {}
     Metal(std::shared_ptr<Texture> texture, double fuzz = 0)
-        : texture(std::move(texture)), fuzz(fuzz < 1 ? fuzz : 1) {}
+        : texture(std::move(texture)), fuzz(std::min(fuzz, 1.0)) {}
 
     Color base_color(const HitRecord& rec) const override {
         return texture->value(rec.u, rec.v, rec.p);
     }
 
     bool scatter(const Ray& r_in, const HitRecord& rec,
-                 Color& attenuation, Ray& scattered) const override {
+                 Color& attenuation, Ray& scattered,
+                 Color& emission) const override {
+        emission = Color(0, 0, 0);
         Vec3 reflected = reflect(r_in.direction.normalized(), rec.normal);
         scattered = Ray(rec.p, reflected + fuzz * random_in_unit_sphere());
         attenuation = base_color(rec);
@@ -66,7 +79,8 @@ public:
 class Dielectric : public Material {
 public:
     double ior;
-    Dielectric(double index_of_refraction) : ior(index_of_refraction) {}
+
+    explicit Dielectric(double index_of_refraction) : ior(index_of_refraction) {}
 
     Color base_color(const HitRecord& rec) const override {
         (void)rec;
@@ -74,7 +88,9 @@ public:
     }
 
     bool scatter(const Ray& r_in, const HitRecord& rec,
-                 Color& attenuation, Ray& scattered) const override {
+                 Color& attenuation, Ray& scattered,
+                 Color& emission) const override {
+        emission = Color(0, 0, 0);
         attenuation = Color(1.0, 1.0, 1.0);
         double ratio = rec.front_face ? (1.0 / ior) : ior;
         Vec3 unit_dir = r_in.direction.normalized();
@@ -97,6 +113,120 @@ private:
         double r0 = (1 - ref_idx) / (1 + ref_idx);
         r0 = r0 * r0;
         return r0 + (1 - r0) * std::pow(1 - cosine, 5);
+    }
+};
+
+// PBR metal-roughness with Cook-Torrance BRDF (GGX + Smith + Schlick)
+class PBR : public Material {
+public:
+    std::shared_ptr<Texture> albedo;
+    std::shared_ptr<Texture> metallic;
+    std::shared_ptr<Texture> roughness;
+    std::shared_ptr<Texture> normal;
+    bool has_normal_map = false;
+
+    PBR(std::shared_ptr<Texture> albedo_tex, double metallic_val, double roughness_val)
+        : albedo(std::move(albedo_tex)),
+          metallic(std::make_shared<SolidColorTexture>(Color(metallic_val, 0, 0))),
+          roughness(std::make_shared<SolidColorTexture>(Color(roughness_val, 0, 0))),
+          normal(std::make_shared<SolidColorTexture>(Color(0.5, 0.5, 1.0))) {}
+
+    Color base_color(const HitRecord& rec) const override {
+        return albedo->value(rec.u, rec.v, rec.p);
+    }
+
+    bool scatter(const Ray& r_in, const HitRecord& rec,
+                 Color& attenuation, Ray& scattered,
+                 Color& emission) const override {
+        emission = Color(0, 0, 0);
+
+        Color base = base_color(rec);
+        double met = metallic->value(rec.u, rec.v, rec.p).x;
+        double rough = std::max(0.001, roughness->value(rec.u, rec.v, rec.p).x);
+        met = std::clamp(met, 0.0, 1.0);
+        rough = std::clamp(rough, 0.001, 1.0);
+
+        Vec3 n = rec.normal;
+        if (has_normal_map && rec.has_tangent) {
+            Color ns = normal->value(rec.u, rec.v, rec.p);
+            Vec3 tn = Vec3(2 * ns.x - 1, 2 * ns.y - 1, 2 * ns.z - 1).normalized();
+            Vec3 T = rec.tangent.normalized();
+            Vec3 B = cross(n, T).normalized();
+            n = (T * tn.x + B * tn.y + n * tn.z).normalized();
+            if (dot(n, rec.normal) < 0) n = -n;
+        }
+
+        Vec3 v = (-r_in.direction).normalized();
+        double n_dot_v = std::max(0.0, dot(n, v));
+
+        Vec3 up = std::fabs(n.x) > 0.9 ? Vec3(0, 1, 0) : Vec3(1, 0, 0);
+        Vec3 tbn_t = cross(up, n).normalized();
+        Vec3 tbn_b = cross(n, tbn_t);
+
+        double r1 = random_double();
+        double r2 = random_double();
+        double alpha = rough * rough;
+        double phi = 2 * pi * r1;
+        double cos_theta = std::sqrt((1 - r2) / (1 + (alpha * alpha - 1) * r2));
+        double sin_theta = std::sqrt(1 - cos_theta * cos_theta);
+        Vec3 h_local(sin_theta * std::cos(phi), sin_theta * std::sin(phi), cos_theta);
+        Vec3 h = (tbn_t * h_local.x + tbn_b * h_local.y + n * h_local.z).normalized();
+
+        Vec3 scattered_dir = (2 * dot(v, h) * h - v).normalized();
+        double n_dot_l = std::max(0.0, dot(n, scattered_dir));
+        double n_dot_h = std::max(0.0, dot(n, h));
+        double v_dot_h = std::max(0.0, dot(v, h));
+
+        if (n_dot_l <= 0 || n_dot_v <= 0 || v_dot_h <= 0) return false;
+
+        double a2 = alpha * alpha;
+        double denom_d = n_dot_h * n_dot_h * (a2 - 1) + 1;
+        double D = a2 / (pi * denom_d * denom_d);
+
+        auto g1 = [&](double ndx) {
+            double sq = std::sqrt(a2 + (1 - a2) * ndx * ndx);
+            return 2 * ndx / (ndx + sq);
+        };
+        double G = g1(n_dot_l) * g1(n_dot_v);
+
+        Color F0 = (1 - met) * Color(0.04, 0.04, 0.04) + met * base;
+        Color F = F0 + (Color(1, 1, 1) - F0) * std::pow(1 - v_dot_h, 5);
+
+        Color kD = (Color(1, 1, 1) - F) * (1 - met);
+        Color diffuse = kD * base / pi;
+        Color specular = F * (D * G) / (4 * n_dot_l * n_dot_v);
+        Color brdf = diffuse + specular;
+
+        double pdf = (D * n_dot_h) / (4 * v_dot_h);
+        if (pdf <= 0) return false;
+
+        attenuation = brdf * n_dot_l / pdf;
+        scattered = Ray(rec.p, scattered_dir);
+        return true;
+    }
+};
+
+// Emissive material (area light)
+class Emissive : public Material {
+public:
+    Color emission;
+
+    explicit Emissive(const Color& e) : emission(e) {}
+
+    Color base_color(const HitRecord& rec) const override {
+        (void)rec;
+        return emission;
+    }
+
+    bool scatter(const Ray& r_in, const HitRecord& rec,
+                 Color& attenuation, Ray& scattered,
+                 Color& emission_out) const override {
+        (void)r_in;
+        (void)rec;
+        (void)scattered;
+        (void)attenuation;
+        emission_out = emission;
+        return false;
     }
 };
 

@@ -3,8 +3,35 @@
 
 #include "raytracer/geometry/hittable.h"
 #include "raytracer/math/vec2.h"
+#include "raytracer/math/vec3.h"
 #include <algorithm>
 #include <cmath>
+
+// Moller-Trumbore ray-triangle intersection.
+// Barycentric weights: b0 = 1 - b1 - b2 (v0), b1 (v1), b2 (v2).
+inline bool triangle_intersect(const Ray& r, double t_min, double t_max,
+                               const Point3& v0, const Point3& v1, const Point3& v2,
+                               double& t, double& b1, double& b2) {
+    const double eps = 1e-8;
+    Vec3 edge1 = v1 - v0;
+    Vec3 edge2 = v2 - v0;
+    Vec3 pvec = cross(r.direction, edge2);
+    double det = dot(edge1, pvec);
+
+    if (std::fabs(det) < eps) return false;
+    double inv_det = 1.0 / det;
+
+    Vec3 tvec = r.origin - v0;
+    b1 = dot(tvec, pvec) * inv_det;
+    if (b1 < 0.0 || b1 > 1.0) return false;
+
+    Vec3 qvec = cross(tvec, edge1);
+    b2 = dot(r.direction, qvec) * inv_det;
+    if (b2 < 0.0 || (b1 + b2) > 1.0) return false;
+
+    t = dot(edge2, qvec) * inv_det;
+    return t >= t_min && t <= t_max;
+}
 
 class Triangle : public Hittable {
 public:
@@ -26,6 +53,12 @@ public:
     Triangle(const Point3& a, const Point3& b, const Point3& c,
              const Vec3& na, const Vec3& nb, const Vec3& nc,
              const Vec2& ta, const Vec2& tb, const Vec2& tc,
+             Material* material = nullptr)
+        : v0(a), v1(b), v2(c), n0(na), n1(nb), n2(nc), uv0(ta), uv1(tb), uv2(tc),
+          has_vertex_normals(true), has_uvs(true), material(material) {}
+    Triangle(const Point3& a, const Point3& b, const Point3& c,
+             const Vec3& na, const Vec3& nb, const Vec3& nc,
+             const Vec2& ta, const Vec2& tb, const Vec2& tc,
              bool has_normals, bool has_texcoords,
              Material* material = nullptr)
         : v0(a), v1(b), v2(c), n0(na), n1(nb), n2(nc), uv0(ta), uv1(tb), uv2(tc),
@@ -33,39 +66,53 @@ public:
 
     bool hit(const Ray& r, double t_min, double t_max,
              HitRecord& rec) const override {
-        const double eps = 1e-8;
-        Vec3 edge1 = v1 - v0;
-        Vec3 edge2 = v2 - v0;
-        Vec3 pvec = cross(r.direction, edge2);
-        double det = dot(edge1, pvec);
+        double t, b1, b2;
+        if (!triangle_intersect(r, t_min, t_max, v0, v1, v2, t, b1, b2)) {
+            return false;
+        }
 
-        if (std::fabs(det) < eps) return false;
-        double inv_det = 1.0 / det;
-
-        Vec3 tvec = r.origin - v0;
-        double bary_u = dot(tvec, pvec) * inv_det;
-        if (bary_u < 0.0 || bary_u > 1.0) return false;
-
-        Vec3 qvec = cross(tvec, edge1);
-        double bary_v = dot(r.direction, qvec) * inv_det;
-        if (bary_v < 0.0 || (bary_u + bary_v) > 1.0) return false;
-
-        double t = dot(edge2, qvec) * inv_det;
-        if (t < t_min || t > t_max) return false;
-
+        double b0 = 1.0 - b1 - b2;
         rec.t = t;
         rec.p = r.at(t);
-        Vec3 outward_normal = cross(edge1, edge2).normalized();
-        double w = 1.0 - bary_u - bary_v;
+
+        Vec3 outward_normal;
         if (has_vertex_normals) {
-            outward_normal = (w * n0 + bary_u * n1 + bary_v * n2).normalized();
+            outward_normal = b0 * n0 + b1 * n1 + b2 * n2;
+            if (outward_normal.length_squared() < 1e-12) {
+                outward_normal = cross(v1 - v0, v2 - v0);
+            }
+        } else {
+            outward_normal = cross(v1 - v0, v2 - v0);
         }
+        if (outward_normal.length_squared() < 1e-12) return false;
+        rec.set_face_normal(r, outward_normal.normalized());
+
         if (has_uvs) {
-            Vec2 uv = w * uv0 + bary_u * uv1 + bary_v * uv2;
+            Vec2 uv = b0 * uv0 + b1 * uv1 + b2 * uv2;
             rec.u = uv.x;
             rec.v = uv.y;
+
+            double du1 = uv1.x - uv0.x;
+            double dv1 = uv1.y - uv0.y;
+            double du2 = uv2.x - uv0.x;
+            double dv2 = uv2.y - uv0.y;
+            double det = du1 * dv2 - du2 * dv1;
+            Vec3 edge1 = v1 - v0;
+            Vec3 edge2 = v2 - v0;
+            if (std::fabs(det) > 1e-10) {
+                double inv = 1.0 / det;
+                rec.tangent = safe_tangent_from_candidate(inv * (dv2 * edge1 - dv1 * edge2), rec.normal);
+            } else {
+                rec.tangent = orthonormal_tangent(rec.normal);
+            }
+            rec.has_tangent = true;
+        } else {
+            rec.u = b1;
+            rec.v = b2;
+            rec.tangent = orthonormal_tangent(rec.normal);
+            rec.has_tangent = true;
         }
-        rec.set_face_normal(r, outward_normal);
+
         rec.material = material;
         return true;
     }
