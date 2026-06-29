@@ -1,8 +1,7 @@
 # Raytracer
 
-一个从零开始的 C++ 光线追踪渲染器，零外部依赖，输出 PPM 图片文件。
+一个从零开始的 C++ 光线追踪渲染器，输出 PPM 图片文件。
 场景通过 JSON 文件配置，支持命令行参数覆盖。
-适合学习渲染底层原理：射线-几何求交、漫反射、递归反射/折射、抗锯齿、相机投影。
 
 ## 快速开始
 
@@ -227,7 +226,7 @@ open out.png
 |------|----------|------|
 | `"lambertian"` | `albedo`: [r,g,b], `texture`: string/object | 漫反射（哑光） |
 | `"metal"` | `albedo`: [r,g,b], `texture`: string/object, `fuzz`: 0~1 | 金属反射，fuzz=0 镜面，越大越粗糙 |
-| `"dielectric"` | `ior`: float | 玻璃/水等透明介质，ior=1.5 玻璃，1.33 水 |
+| `"dielectric"` | `ior`: float, `albedo`: [r,g,b]（可选） | 玻璃/水等透明介质，ior=1.5 玻璃，1.33 水；albedo 默认白色，设为颜色可渲染有色玻璃 |
 | `"pbr"` | `albedo`/`metallic`/`roughness` + 各 `_map` + `normal_map` | Cook-Torrance 金属-粗糙度材质 |
 | `"emissive"` | `emission`: [r,g,b] | 自发光材质，可作为面光源 |
 
@@ -239,6 +238,8 @@ open out.png
 |------|------|
 | `scenes/default.json` | 漫反射球 + 地面（基础验证） |
 | `scenes/three_balls.json` | 漫反射 + 玻璃 + 金属 三球场景 |
+| `scenes/glass_bottle.json` | GLB 玻璃瓶（自动识别 BLEND 为透明介质） |
+| `scenes/glass.json` | 玻璃材质验证 |
 | `scenes/obj.json` | 通用 OBJ/GLB 模型模板，配合 `--model` 使用 |
 | `scenes/mark.json` | 加载 `models/obj/mark.obj` 的网格场景 |
 | `scenes/triangle_test.json` | 三角形 + 三角网格（验证 UV 插值） |
@@ -260,6 +261,9 @@ open out.png
 - 支持 GLB 里的 `POSITION`、`NORMAL`、`TEXCOORD_0`、`indices` 和节点矩阵/TRS
 - 支持 GLB 基础材质：`baseColorFactor`、`metallicFactor`、`roughnessFactor`、透明度 alpha
 - 支持 GLB `baseColorTexture`，可读取内嵌 bufferView 图片或外部图片路径
+- 支持 GLB `alphaMode: "BLEND"` 自动识别为透明介质（Dielectric），常用于导出工具的玻璃近似
+- 支持 GLB KHR 扩展：`KHR_materials_transmission`（透射）、`KHR_materials_ior`（折射率）
+- GLB 材质路由优先级：KHR transmission > alphaMode BLEND > alpha < 0.35 > metallic > lambertian
 - GLB 材质会按 primitive 自动绑定到三角形；`material` 字段只作为 fallback，除非设置 `override_material: true`
 - 支持根据 OBJ/GLB 包围盒自动居中、缩放模型
 - 支持没有显式 `camera` 时根据模型包围盒自动放置相机
@@ -332,7 +336,7 @@ open out.png
 |------|------|------|
 | `lambertian` | `albedo` | 漫反射（保留） |
 | `metal` | `albedo`, `fuzz` | 金属反射（保留） |
-| `dielectric` | `ior` | 玻璃/水（保留） |
+| `dielectric` | `ior`, `albedo`（可选） | 玻璃/水（保留） |
 | `pbr` | `albedo`/`metallic`/`roughness` + 各 `_map` + `normal_map` | Cook-Torrance BRDF |
 | `emissive` | `emission` | 自发光（面光源） |
 
@@ -367,57 +371,49 @@ open out.png
 ```
 raytracer/
 ├── CMakeLists.txt                构建配置
+├── build.sh                      构建脚本（g++ 直接编译）
+├── run.sh                        运行脚本（编译后直接执行）
 ├── include/raytracer/            头文件库（header-only，按模块分目录）
 │   ├── math/                     模块 A：数学库
 │   │   ├── util.h                常量 (pi/infinity)、随机数、角度换算
 │   │   ├── vec3.h                三维向量（兼作 Point3 / Color）、reflect/refract
+│   │   ├── vec2.h                二维向量（纹理坐标）
+│   │   ├── mat4.h                4x4 变换矩阵（平移/旋转/缩放/法线变换）
 │   │   └── ray.h                 射线：origin + direction，at(t)
 │   ├── geometry/                 模块 B：几何求交
-│   │   ├── hittable.h            可命中物体抽象基类 + HitRecord
+│   │   ├── hittable.h            可命中物体抽象基类 + HitRecord（含 tangent/UV）
 │   │   ├── sphere.h              球体：射线-球求交
-│   │   └── hittable_list.h       物体列表：遍历找最近交点
+│   │   ├── hittable_list.h       物体列表：遍历找最近交点
+│   │   ├── triangle.h            单三角形（Möller–Trumbore + UV 插值）
+│   │   ├── triangle_mesh.h       三角网格（SoA 布局 + 内部 BVH）
+│   │   ├── aabb.h                轴对齐包围盒
+│   │   └── bvh.h                 线性 BVH 加速结构（扁平节点 + 栈遍历）
 │   ├── material/                 模块 C：材质
-│   │   └── material.h            Lambertian / Metal / Dielectric
+│   │   ├── material.h            Lambertian / Metal / Dielectric / PBR / Emissive
+│   │   └── texture.h             纹理基类 + SolidColor / Image / Tinted / Checker
 │   ├── render/                   模块 D：渲染
 │   │   ├── camera.h              相机：FOV、lookat、景深
-│   │   └── image.h               PPM 写入 + 伽马校正
+│   │   ├── image.h               PPM 写入 + 伽马校正
+│   │   └── texture.h             渲染端纹理工具
 │   └── scene/                    模块 D：场景
 │       ├── json.h                最小 JSON 解析器（零依赖）
-│       └── scene.h               场景加载器：JSON → Camera + HittableList
+│       ├── obj.h                 OBJ 加载器（手写 + tinyobjloader）
+│       ├── glb.h                 GLB 加载器（glTF 2.0 + KHR 扩展）
+│       └── scene.h               场景加载器：JSON → Camera + HittableList + Lights
 ├── src/main.cpp                  命令行解析 + 渲染主循环 + ray_color 递归
+├── third_party/                  第三方 header-only 库
+│   ├── stb_image.h               PNG/JPG 解码
+│   └── tiny_obj_loader.h         OBJ 解析
 ├── scenes/                       场景文件目录
-│   ├── default.json
-│   └── three_balls.json
-└── out.ppm                       渲染输出（运行后生成）
+├── models/                       测试模型（OBJ/GLB）
+├── textures/                     测试纹理
+├── scripts/                      辅助脚本（ppm_to_png.sh）
+├── tests/                        回归测试
+└── docs/                         设计文档（specs + plans）
 ```
 
 头文件 include 路径统一为 `#include "raytracer/<模块>/<文件>.h"`，例如 `#include "raytracer/math/vec3.h"`。
 
-## 模块划分（四人协作）
-
-| 模块 | 目录/文件 | 职责 |
-|------|-----------|------|
-| **A 数学库** | `include/raytracer/math/` | 向量、射线、随机数、常量。全项目地基 |
-| **B 几何求交** | `include/raytracer/geometry/` | 物体抽象、球求交、列表遍历 |
-| **C 材质着色** | `include/raytracer/material/` | Lambert / Metal / Dielectric 的 scatter |
-| **D 相机/输出** | `include/raytracer/render/` `include/raytracer/scene/` `src/` | 主射线、PPM 写入、JSON 解析、场景加载、渲染循环 |
-
-依赖方向（无环）：
-
-```
-A 数学库
-  └─> B 几何 ──(持 Material* 指针，前向声明)──> C 材质
-        └──────────────> D 相机/渲染/输出 (集成 B、C，调 A)
-```
-
-每人改自己模块的子目录，文件不重叠，合并零冲突。
-
-## 接口契约（签名冻结，改接口需团队协商）
-
-- `HitRecord` 字段：`p / normal / t / u / v / front_face / Material*`（`u`/`v` 为纹理坐标，阶段 8 新增）
-- `Material*` 生命周期由 `Scene`（`scene.h`）通过 `unique_ptr` 持有，几何体只存裸指针
-- 颜色统一 RGB ∈ [0,1]，输出前由 `image.h` 做伽马 2.2 校正
-- 随机数统一走 `util.h` 的 `random_double()`，避免各写各的
 
 ## 当前实现状态
 
@@ -433,19 +429,22 @@ A 数学库
 - ✅ 阶段 9：OBJ 模型加载与变换（tinyobjloader + 4x4 矩阵 + 平滑法线）
 - ✅ 阶段 10：BVH 线性化加速（扁平节点 + 栈遍历，GPU 友好）
 - ✅ 阶段 11：PBR 材质 + 纹理 + 自发光（Cook-Torrance + GGX 重要性采样）
+- ✅ GLB 玻璃材质支持：`alphaMode: BLEND` 自动识别 + `KHR_materials_transmission` / `KHR_materials_ior` 扩展 + Dielectric albedo/纹理
 - ⬜ 后续：CUDA 移植
 
 ## 渲染原理速览
 
 1. 相机对每个像素发射一条主射线
 2. `ray_color` 求射线与场景最近交点
-3. 命中 → 调材质 `scatter()` 生成新射线，颜色按 albedo 衰减后递归
-4. 未命中 → 返回天空背景色
-5. 递归到 `max_depth` 或射线不散射则停止
-6. 每像素多次采样平均，消除锯齿
+3. 命中 → 计算直接光照（`direct_lighting`：遍历光源 + 阴影射线 + Lambert 余弦）
+4. 调材质 `scatter()` 生成间接射线，颜色按 attenuation 衰减后递归
+5. 透明材质（Dielectric）跳过直接光照，间接光权重为 1.0；不透明材质间接光权重 0.35
+6. 未命中 → 返回天空背景色（蓝白渐变）
+7. 递归到 `max_depth` 或射线不散射则停止
+8. 每像素多次采样平均，消除锯齿
 
 ## 开发环境要求
 
 - C++17 编译器（g++ / clang++ / MSVC 均可）
 - CMake ≥ 3.10（可选）
-- 零外部依赖，仅使用 C++ 标准库
+- 第三方 header-only 库（已包含在 `third_party/`）：`stb_image.h`（图片解码）、`tiny_obj_loader.h`（OBJ 解析）
