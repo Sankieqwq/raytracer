@@ -22,6 +22,7 @@ public:
         (void)rec;
         return Color(0.8, 0.8, 0.8);
     }
+    virtual bool is_transparent() const { return false; }
 };
 
 class Lambertian : public Material {
@@ -79,19 +80,26 @@ public:
 class Dielectric : public Material {
 public:
     double ior;
+    Color albedo;
+    std::shared_ptr<Texture> albedo_texture;
 
-    explicit Dielectric(double index_of_refraction) : ior(index_of_refraction) {}
+    explicit Dielectric(double index_of_refraction, Color albedo = Color(1.0, 1.0, 1.0))
+        : ior(index_of_refraction), albedo(albedo) {}
+
+    Dielectric(double index_of_refraction, std::shared_ptr<Texture> texture)
+        : ior(index_of_refraction), albedo(1.0, 1.0, 1.0), albedo_texture(std::move(texture)) {}
 
     Color base_color(const HitRecord& rec) const override {
-        (void)rec;
-        return Color(1.0, 1.0, 1.0);
+        return albedo_texture ? albedo_texture->value(rec.u, rec.v, rec.p) : albedo;
     }
+
+    bool is_transparent() const override { return true; }
 
     bool scatter(const Ray& r_in, const HitRecord& rec,
                  Color& attenuation, Ray& scattered,
                  Color& emission) const override {
         emission = Color(0, 0, 0);
-        attenuation = Color(1.0, 1.0, 1.0);
+        attenuation = base_color(rec);
         double ratio = rec.front_face ? (1.0 / ior) : ior;
         Vec3 unit_dir = r_in.direction.normalized();
         double cos_theta = std::fmin(dot(-unit_dir, rec.normal), 1.0);

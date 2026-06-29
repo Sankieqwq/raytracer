@@ -1,0 +1,64 @@
+{
+    "image": {
+        "width": 600,
+        "height": 600,
+        "samples": 32,
+        "max_depth": 32,
+        "output": "glass_bottle.ppm"
+    },
+    "camera": {
+        "lookfrom": [
+            4,
+            2.5,
+            4
+        ],
+        "lookat": [
+            0,
+            1.5,
+            0
+        ],
+        "vup": [
+            0,
+            1,
+            0
+        ],
+        "vfov": 30,
+        "aperture": 0.0,
+        "focus_dist": 5.74
+    },
+    "ground": {
+        "enabled": true,
+        "material": {
+            "type": "lambertian",
+            "albedo": [
+                0.5,
+                0.5,
+                0.5
+            ]
+        }
+    },
+    "objects": [
+        {
+            "type": "mesh",
+            "file": "../models/glb/glass.glb",
+            "transform": {
+                "rotate": [
+                    -90,
+                    0,
+                    0
+                ],
+                "scale": 2.412,
+                "translate": [
+                    0,
+                    2.916,
+                    0
+                ]
+            },
+            "override_material": true,
+            "material": {
+                "type": "dielectric",
+                "ior": 1.5
+            }
+        }
+    ]
+}

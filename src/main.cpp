@@ -67,13 +67,16 @@ Color ray_color(const Ray& r, const Scene& scene, int depth, const RenderOptions
 
     HitRecord rec;
     if (scene.world->hit(r, 0.001, infinity, rec)) {
-        Color direct = direct_lighting(rec, scene);
+        Color direct = (rec.material && rec.material->is_transparent())
+            ? Color(0, 0, 0)
+            : direct_lighting(rec, scene);
         Ray scattered;
         Color attenuation, emission;
         bool did_scatter = rec.material && rec.material->scatter(r, rec, attenuation, scattered, emission);
         if (options.direct_only) return emission + direct;
         if (did_scatter) {
-            return emission + direct + 0.35 * attenuation * ray_color(scattered, scene, depth - 1, options);
+            double indirect_w = (rec.material && rec.material->is_transparent()) ? 1.0 : 0.35;
+            return emission + direct + indirect_w * attenuation * ray_color(scattered, scene, depth - 1, options);
         }
         return emission + direct;
     }

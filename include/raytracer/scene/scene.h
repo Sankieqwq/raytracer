@@ -179,7 +179,8 @@ inline Material* parse_material(const JsonValue& m,
         Color albedo = m.has("albedo") ? to_vec3(m.at("albedo")) : Color(0.8, 0.8, 0.8);
         mat = std::make_unique<Metal>(material_texture_or_color(m, base_dir, albedo), fuzz);
     } else if (type == "dielectric") {
-        mat = std::make_unique<Dielectric>(m.at("ior").numVal);
+        Color alb = m.has("albedo") ? to_vec3(m.at("albedo")) : Color(1.0, 1.0, 1.0);
+        mat = std::make_unique<Dielectric>(m.at("ior").numVal, alb);
     } else if (type == "pbr") {
         auto albedo_tex = parse_texture_color(m, "albedo", Color(0.8, 0.8, 0.8), base_dir);
         auto metallic_tex = parse_texture_scalar(m, "metallic", 0.0, base_dir);
@@ -245,10 +246,14 @@ inline std::shared_ptr<Texture> make_loaded_texture(const ObjMeshData& mesh,
 }
 
 inline Material* add_loaded_material(const ObjMeshData& mesh,
-                                     const LoadedMaterialData& data,
-                                     Scene& scene) {
+                                      const LoadedMaterialData& data,
+                                      Scene& scene) {
     std::unique_ptr<Material> mat;
-    if (data.alpha < 0.35) {
+    if (data.transmission > 0.5) {
+        mat = std::make_unique<Dielectric>(data.ior, make_loaded_texture(mesh, data));
+    } else if (data.alpha_blend) {
+        mat = std::make_unique<Dielectric>(data.ior, make_loaded_texture(mesh, data));
+    } else if (data.alpha < 0.35) {
         mat = std::make_unique<Dielectric>(1.5);
     } else if (data.metallic > 0.5) {
         double fuzz = std::clamp(data.roughness, 0.0, 1.0);

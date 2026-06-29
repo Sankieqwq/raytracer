@@ -38,6 +38,9 @@ struct LoadedMaterialData {
     double roughness = 0.6;
     double alpha = 1.0;
     int base_color_texture = -1;
+    bool alpha_blend = false;       // alphaMode == "BLEND"
+    double transmission = 0.0;      // KHR_materials_transmission
+    double ior = 1.5;               // KHR_materials_ior (glTF default)
 };
 
 struct ObjMeshData {
