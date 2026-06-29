@@ -17,7 +17,7 @@
     "objects": [
         {
             "type": "mesh",
-            "file": "../models/mark.obj",
+            "file": "../models/obj/mark.obj",
             "transform": {
                 "rotate": [0, 180, 0],
                 "scale": 0.2
