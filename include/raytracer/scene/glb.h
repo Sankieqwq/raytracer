@@ -274,6 +274,7 @@ inline LoadedTextureData glb_texture_data(const GlbContext& glb,
 
 inline LoadedMaterialData glb_material_data(const JsonValue& material) {
     LoadedMaterialData data;
+    data.albedo = Color(1.0, 1.0, 1.0);
     if (material.has("name")) data.name = material.at("name").strVal;
 
     if (material.has("pbrMetallicRoughness")) {
@@ -294,6 +295,19 @@ inline LoadedMaterialData glb_material_data(const JsonValue& material) {
 
     if (material.has("alphaMode") && material.at("alphaMode").strVal == "BLEND") {
         data.alpha = data.alpha < 1.0 ? data.alpha : 0.5;
+        data.alpha_blend = true;
+    }
+
+    if (material.has("extensions")) {
+        const JsonValue& exts = material.at("extensions");
+        if (exts.has("KHR_materials_transmission")) {
+            const JsonValue& tr = exts.at("KHR_materials_transmission");
+            data.transmission = json_double(tr, "transmissionFactor", 0.0);
+        }
+        if (exts.has("KHR_materials_ior")) {
+            const JsonValue& ior_ext = exts.at("KHR_materials_ior");
+            data.ior = json_double(ior_ext, "ior", 1.5);
+        }
     }
 
     return data;
