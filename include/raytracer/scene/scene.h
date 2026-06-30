@@ -62,6 +62,7 @@ struct Scene {
     Color ambient_light = Color(0.04, 0.04, 0.04);
     std::vector<Light> lights;
     std::vector<EmissiveObject> emissive_objects;
+    double emissive_total_area = 0.0;
 
     std::vector<std::unique_ptr<Material>> materials;
     std::vector<std::unique_ptr<Hittable>> objects;
@@ -362,13 +363,11 @@ inline LightSample sample_any_light(const Scene& scene, const Point3& p) {
 
         double geom_area = eo.geometry->area();
         if (geom_area <= 0) return LightSample{};
-
-        double total_area = 0;
-        for (const EmissiveObject& e : scene.emissive_objects) total_area += e.geometry->area();
+        if (scene.emissive_total_area <= 0) return LightSample{};
 
         s.radiance = eo.emission;
         s.is_delta = false;
-        s.pdf = (dist2 / cos_light) / total_area * (double(n_area) / total);
+        s.pdf = (dist2 / cos_light) / scene.emissive_total_area * (double(n_area) / total);
     }
     return s;
 }
@@ -729,6 +728,7 @@ private:
 inline void collect_emissive_objects(Scene& scene) {
     scene.emissive_objects.clear();
     scene.emissive_samplers.clear();
+    scene.emissive_total_area = 0.0;
     for (Hittable* obj : scene.primitives.objects) {
         Sphere* sph = dynamic_cast<Sphere*>(obj);
         if (sph && sph->material && sph->material->is_emissive()) {
@@ -773,6 +773,9 @@ inline void collect_emissive_objects(Scene& scene) {
             }
         }
     }
+    for (const EmissiveObject& eo : scene.emissive_objects) {
+        scene.emissive_total_area += eo.geometry->area();
+    }
 }
 
 inline void load_scene(const std::string& path,
@@ -788,6 +791,7 @@ inline void load_scene(const std::string& path,
     scene.lights.clear();
     scene.emissive_objects.clear();
     scene.emissive_samplers.clear();
+    scene.emissive_total_area = 0.0;
     scene.output_options = ImageOutputOptions();
     scene.seed = 0;
     scene.has_seed = false;

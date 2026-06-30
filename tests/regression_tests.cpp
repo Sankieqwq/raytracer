@@ -248,6 +248,8 @@ void test_collect_emissive_objects_uses_only_emissive_mesh_triangles() {
               "emissive mesh sampling area should exclude non-emissive triangles");
         check(near_vec(scene.emissive_objects[0].emission, Color(4, 3, 2)),
               "emissive mesh subset should keep the emissive material color");
+        check(near(scene.emissive_total_area, 2.0),
+              "scene should precompute total emissive sampling area");
     }
 }
 

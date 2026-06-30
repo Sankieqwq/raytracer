@@ -49,6 +49,15 @@ python3 tests/golden/compare_images.py --actual /tmp/golden_default.png --expect
 python3 tests/golden/compare_images.py --actual /tmp/golden_mirror_glass_water.png --expected tests/golden/images/golden_mirror_glass_water.png --update
 ```
 
+### 性能基准
+
+```bash
+./build.sh
+./scripts/benchmark.sh
+```
+
+`scripts/benchmark.sh` 会用单线程和硬件线程数分别渲染 `default`、`pbr_test`、`mirror_glass_water` 和 `mark` 场景，并通过 `--stats` 打印加载耗时、渲染耗时、总耗时和发光体采样面积。
+
 ### 运行
 
 ```bash
@@ -91,6 +100,7 @@ python3 tests/golden/compare_images.py --actual /tmp/golden_mirror_glass_water.p
 | `--exposure <n>` | 显示曝光倍率（覆盖场景配置） | 场景中的 `exposure` 或 1.0 |
 | `--tone-map <mode>` | 色调映射：`aces`、`reinhard`、`none` | 场景中的 `tone_map` 或 `aces` |
 | `--seed <n>` | 固定随机种子，便于复现渲染结果 | 场景中的 `seed` 或随机种子 |
+| `--stats` | 输出 load/render/total 耗时和场景统计 | 关闭 |
 | `--direct-only` | 只计算直接光照、阴影和环境光，关闭递归随机反弹以减少噪声 | 关闭 |
 | `--preview` | 快速预览模式：启用 `--direct-only`，且未指定 `--samples` 时使用 1 sample | 关闭 |
 | `--help` | 显示帮助 | — |

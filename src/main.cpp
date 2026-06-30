@@ -13,6 +13,7 @@
 #include "raytracer/scene/scene.h"
 #include <vector>
 #include <atomic>
+#include <chrono>
 #include <filesystem>
 #include <cmath>
 #include <iostream>
@@ -22,20 +23,13 @@
 struct RenderOptions {
     bool direct_only = false;
     bool preview = false;
+    bool stats = false;
     int threads = 0;
 };
 
 bool is_shadowed(const Hittable& world, const Ray& shadow_ray, double max_t) {
     HitRecord shadow_rec;
     return world.hit(shadow_ray, 0.001, max_t, shadow_rec);
-}
-
-double total_emissive_area(const Scene& scene) {
-    double total_area = 0;
-    for (const EmissiveObject& eo : scene.emissive_objects) {
-        total_area += eo.geometry->area();
-    }
-    return total_area;
 }
 
 const EmissiveObject* sample_emissive_by_area(const Scene& scene,
@@ -101,7 +95,7 @@ Color ray_color(const Ray& r, const Scene& scene, int depth,
     if (rec.material && rec.material->is_emissive()) {
         Emissive* em = static_cast<Emissive*>(rec.material);
         if (prev_brdf && prev_pdf > 0 && !scene.emissive_objects.empty()) {
-            double total_area = total_emissive_area(scene);
+            double total_area = scene.emissive_total_area;
             double pdf_light = 0;
             if (total_area > 0) {
                 double dist2 = (rec.p - r.origin).length_squared();
@@ -129,7 +123,7 @@ Color ray_color(const Ray& r, const Scene& scene, int depth,
     Color direct = direct_delta_lights(r, rec, scene);
 
     if (!scene.emissive_objects.empty()) {
-        double total_area = total_emissive_area(scene);
+        double total_area = scene.emissive_total_area;
         const EmissiveObject* eo = sample_emissive_by_area(scene, random_double(), total_area);
         Vec3 light_normal;
         Point3 light_point = eo ? eo->geometry->sample_point(random_double(), random_double(), &light_normal) : Point3();
@@ -183,6 +177,7 @@ void print_usage(const char* prog) {
               << "  --exposure <n>     display exposure multiplier (default: scene/default 1.0)\n"
               << "  --tone-map <mode>  tone mapping: aces, reinhard, none\n"
               << "  --seed <n>         deterministic random seed (default: random_device)\n"
+              << "  --stats            print load/render timing and scene statistics\n"
               << "  --direct-only      disable recursive random bounces, use direct light + shadows only\n"
               << "  --preview          fast preview mode: direct-only and samples=1 unless overridden\n";
 }
@@ -221,6 +216,8 @@ int main(int argc, char* argv[]) {
             tone_map_override = argv[++i];
         } else if (arg == "--seed" && i + 1 < argc) {
             seed_override = std::stoll(argv[++i]);
+        } else if (arg == "--stats") {
+            render_options.stats = true;
         } else if (arg == "--direct-only") {
             render_options.direct_only = true;
         } else if (arg == "--preview") {
@@ -250,12 +247,15 @@ int main(int argc, char* argv[]) {
     }
 
     Scene scene;
+    auto total_start = std::chrono::steady_clock::now();
+    auto load_start = std::chrono::steady_clock::now();
     try {
         load_scene(scene_path, scene, load_options);
     } catch (const std::exception& e) {
         std::cerr << "Error loading scene: " << e.what() << "\n";
         return 1;
     }
+    auto load_end = std::chrono::steady_clock::now();
 
     if (!out_override.empty()) scene.output = out_override;
     if (exposure_override > 0) scene.output_options.exposure = exposure_override;
@@ -292,6 +292,7 @@ int main(int argc, char* argv[]) {
     std::atomic<int> rows_done{0};
     std::atomic<int> last_pct{-1};
 
+    auto render_start = std::chrono::steady_clock::now();
     auto render_worker = [&]() {
         while (true) {
             int j = next_row.fetch_add(1);
@@ -328,9 +329,21 @@ int main(int argc, char* argv[]) {
     for (std::thread& worker : workers) {
         worker.join();
     }
+    auto render_end = std::chrono::steady_clock::now();
     std::cerr << "\rProgress: 100%\n";
 
     write_image(scene.output, scene.width, scene.height, pixels, scene.samples, scene.output_options);
+    auto total_end = std::chrono::steady_clock::now();
     std::cout << "Wrote " << scene.output << "\n";
+    if (render_options.stats) {
+        auto millis = [](std::chrono::steady_clock::duration d) {
+            return std::chrono::duration_cast<std::chrono::milliseconds>(d).count();
+        };
+        std::cout << "Stats:\n"
+                  << "  load_ms=" << millis(load_end - load_start) << "\n"
+                  << "  render_ms=" << millis(render_end - render_start) << "\n"
+                  << "  total_ms=" << millis(total_end - total_start) << "\n"
+                  << "  emissive_area=" << scene.emissive_total_area << "\n";
+    }
     return 0;
 }
