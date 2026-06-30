@@ -1,4 +1,6 @@
 #define TINYOBJLOADER_IMPLEMENTATION
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
 
 #include "raytracer/scene/scene.h"
 
@@ -31,6 +33,10 @@ bool near_vec(const Vec3& a, const Vec3& b, double eps = 1e-9) {
 
 bool finite_vec(const Vec3& v) {
     return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z);
+}
+
+bool positive_color(const Color& c) {
+    return c.x > 0 && c.y > 0 && c.z > 0;
 }
 
 JsonValue number(double value) {
@@ -160,6 +166,74 @@ void test_triangle_mesh_exposes_internal_acceleration() {
     check_acceleration_node_count(mesh);
 }
 
+void test_pbr_exposes_brdf_and_pdf_for_direct_lighting() {
+    auto albedo = std::make_shared<SolidColorTexture>(Color(0.8, 0.7, 0.6));
+    PBR pbr(albedo, 0.0, 0.45);
+
+    HitRecord rec;
+    rec.p = Point3(0, 0, 0);
+    rec.normal = Vec3(0, 1, 0);
+    rec.tangent = Vec3(1, 0, 0);
+    rec.has_tangent = true;
+    rec.u = 0.5;
+    rec.v = 0.5;
+
+    Ray incoming(Point3(0, 1, 1), Vec3(0, -1, -1).normalized());
+    Ray outgoing(rec.p, Vec3(0, 1, 1).normalized());
+
+    Color brdf = pbr.f(incoming, outgoing, rec);
+    double pdf = pbr.pdf(incoming, outgoing, rec);
+
+    check(!pbr.is_specular(), "PBR should use the non-delta BRDF path for direct light and MIS");
+    check(pdf > 0 && std::isfinite(pdf), "PBR pdf should be positive for a valid outgoing direction");
+    check(finite_vec(brdf) && positive_color(brdf), "PBR BRDF should be finite and positive for a lit direction");
+}
+
+void test_collect_emissive_objects_uses_only_emissive_mesh_triangles() {
+    Scene scene;
+
+    auto diffuse = std::make_unique<Lambertian>(Color(0.2, 0.2, 0.2));
+    Material* diffuse_ptr = diffuse.get();
+    scene.materials.push_back(std::move(diffuse));
+
+    auto emissive = std::make_unique<Emissive>(Color(4, 3, 2));
+    Material* emissive_ptr = emissive.get();
+    scene.materials.push_back(std::move(emissive));
+
+    auto mesh = std::make_unique<TriangleMesh>();
+    mesh->vertices = {
+        Point3(0, 0, 0), Point3(1, 0, 0), Point3(0, 1, 0),
+        Point3(0, 0, 1), Point3(0, 2, 1), Point3(2, 0, 1)
+    };
+    mesh->indices = {0, 1, 2, 3, 4, 5};
+    mesh->material_per_tri = {diffuse_ptr, emissive_ptr};
+
+    scene.primitives.add(mesh.get());
+    scene.objects.push_back(std::move(mesh));
+
+    collect_emissive_objects(scene);
+
+    check(scene.emissive_objects.size() == 1, "mixed mesh should create one emissive sampling subset");
+    if (!scene.emissive_objects.empty()) {
+        check(near(scene.emissive_objects[0].geometry->area(), 2.0),
+              "emissive mesh sampling area should exclude non-emissive triangles");
+        check(near_vec(scene.emissive_objects[0].emission, Color(4, 3, 2)),
+              "emissive mesh subset should keep the emissive material color");
+    }
+}
+
+void test_mirror_glass_water_acceptance_scene_loads() {
+    Scene scene;
+    load_scene("scenes/mirror_glass_water.json", scene);
+
+    check(scene.width == 640 && scene.height == 360,
+          "mirror/glass/water acceptance scene should use preview-sized image settings");
+    check(scene.primitive_count >= 7,
+          "mirror/glass/water acceptance scene should load several primitives");
+    check(!scene.emissive_objects.empty(),
+          "mirror/glass/water acceptance scene should include at least one emissive area light");
+}
+
 }  // namespace
 
 int main() {
@@ -170,6 +244,9 @@ int main() {
     test_degenerate_mesh_uv_tangent_is_finite();
     test_obj_loader_handles_mixed_missing_attributes();
     test_triangle_mesh_exposes_internal_acceleration();
+    test_pbr_exposes_brdf_and_pdf_for_direct_lighting();
+    test_collect_emissive_objects_uses_only_emissive_mesh_triangles();
+    test_mirror_glass_water_acceptance_scene_loads();
 
     if (failures != 0) {
         std::cerr << failures << " regression test(s) failed\n";

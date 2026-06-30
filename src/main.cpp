@@ -29,7 +29,28 @@ bool is_shadowed(const Hittable& world, const Ray& shadow_ray, double max_t) {
     return world.hit(shadow_ray, 0.001, max_t, shadow_rec);
 }
 
-Color direct_delta_lights(const HitRecord& rec, const Scene& scene) {
+double total_emissive_area(const Scene& scene) {
+    double total_area = 0;
+    for (const EmissiveObject& eo : scene.emissive_objects) {
+        total_area += eo.geometry->area();
+    }
+    return total_area;
+}
+
+const EmissiveObject* sample_emissive_by_area(const Scene& scene,
+                                              double r,
+                                              double total_area) {
+    if (total_area <= 0) return nullptr;
+    double target = r * total_area;
+    double accum = 0;
+    for (const EmissiveObject& eo : scene.emissive_objects) {
+        accum += eo.geometry->area();
+        if (target <= accum) return &eo;
+    }
+    return scene.emissive_objects.empty() ? nullptr : &scene.emissive_objects.back();
+}
+
+Color direct_delta_lights(const Ray& r_in, const HitRecord& rec, const Scene& scene) {
     Color base = rec.material ? rec.material->base_color(rec) : Color(0.8, 0.8, 0.8);
     Color result = base * scene.ambient_light;
 
@@ -56,7 +77,9 @@ Color direct_delta_lights(const HitRecord& rec, const Scene& scene) {
         Ray shadow_ray(rec.p + 0.001 * rec.normal, light_dir);
         if (is_shadowed(*scene.world, shadow_ray, max_t)) continue;
 
-        result += base * light.color * (light.intensity * attenuation * n_dot_l);
+        Ray light_ray(rec.p, light_dir);
+        Color brdf = rec.material ? rec.material->f(r_in, light_ray, rec) : base / pi;
+        result += brdf * light.color * (light.intensity * attenuation * n_dot_l);
     }
 
     return result;
@@ -77,8 +100,7 @@ Color ray_color(const Ray& r, const Scene& scene, int depth,
     if (rec.material && rec.material->is_emissive()) {
         Emissive* em = static_cast<Emissive*>(rec.material);
         if (prev_brdf && prev_pdf > 0 && !scene.emissive_objects.empty()) {
-            double total_area = 0;
-            for (const EmissiveObject& eo : scene.emissive_objects) total_area += eo.geometry->area();
+            double total_area = total_emissive_area(scene);
             double pdf_light = 0;
             if (total_area > 0) {
                 double dist2 = (rec.p - r.origin).length_squared();
@@ -103,19 +125,17 @@ Color ray_color(const Ray& r, const Scene& scene, int depth,
         return emission + attenuation * ray_color(scattered, scene, depth - 1, options, brdf_pdf, true);
     }
 
-    Color direct = direct_delta_lights(rec, scene);
+    Color direct = direct_delta_lights(r, rec, scene);
 
     if (!scene.emissive_objects.empty()) {
-        double r1 = random_double(), r2 = random_double();
-        size_t idx = static_cast<size_t>(random_double() * scene.emissive_objects.size());
-        if (idx >= scene.emissive_objects.size()) idx = scene.emissive_objects.size() - 1;
-        const EmissiveObject& eo = scene.emissive_objects[idx];
+        double total_area = total_emissive_area(scene);
+        const EmissiveObject* eo = sample_emissive_by_area(scene, random_double(), total_area);
         Vec3 light_normal;
-        Point3 light_point = eo.geometry->sample_point(r1, r2, &light_normal);
+        Point3 light_point = eo ? eo->geometry->sample_point(random_double(), random_double(), &light_normal) : Point3();
 
         Vec3 to_light = light_point - rec.p;
         double dist2 = to_light.length_squared();
-        if (dist2 > 1e-8) {
+        if (eo && total_area > 0 && dist2 > 1e-8) {
             double dist = std::sqrt(dist2);
             Vec3 light_dir = to_light / dist;
             double n_dot_l = dot(rec.normal, light_dir);
@@ -124,14 +144,12 @@ Color ray_color(const Ray& r, const Scene& scene, int depth,
                 if (cos_light > 0) {
                     Ray shadow_ray(rec.p + 0.001 * rec.normal, light_dir);
                     if (!is_shadowed(*scene.world, shadow_ray, dist - 0.001)) {
-                        double total_area = 0;
-                        for (const EmissiveObject& e : scene.emissive_objects) total_area += e.geometry->area();
                         double pdf_light = (dist2 / cos_light) / total_area;
                         Ray light_ray(rec.p, light_dir);
                         Color f_val = rec.material ? rec.material->f(r, light_ray, rec) : Color(0,0,0);
                         double brdf_pdf = rec.material ? rec.material->pdf(r, light_ray, rec) : 0;
                         double w_light = pdf_light / (pdf_light + brdf_pdf);
-                        direct += eo.emission * f_val * n_dot_l * w_light / pdf_light;
+                        direct += eo->emission * f_val * n_dot_l * w_light / pdf_light;
                     }
                 }
             }

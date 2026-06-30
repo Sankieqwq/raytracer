@@ -24,3 +24,5 @@ target_compile_options(raytracer_regression_tests PRIVATE
 target_link_options(raytracer_regression_tests PRIVATE -fsanitize=address,undefined)
 
 add_test(NAME raytracer_regression_tests COMMAND raytracer_regression_tests)
+set_tests_properties(raytracer_regression_tests PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})

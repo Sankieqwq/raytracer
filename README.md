@@ -248,6 +248,7 @@ open out.png
 | `scenes/pbr_test.json` | PBR 金属-粗糙度材质验证 |
 | `scenes/texture_test.json` | 贴图采样验证 |
 | `scenes/textured_quad.json` | 带 UV 和棋盘纹理的最小贴图验证场景 |
+| `scenes/mirror_glass_water.json` | 镜面金属 + 玻璃 + 水面 + PBR + 自发光面积灯验收场景 |
 
 ## OBJ / GLB 网格支持
 

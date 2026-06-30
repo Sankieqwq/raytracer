@@ -61,6 +61,7 @@ struct Scene {
 
     std::vector<std::unique_ptr<Material>> materials;
     std::vector<std::unique_ptr<Hittable>> objects;
+    std::vector<std::unique_ptr<Hittable>> emissive_samplers;
 };
 
 struct SceneLoadOptions {
@@ -606,6 +607,170 @@ inline std::unique_ptr<Camera> build_camera(const JsonValue& root,
     return std::make_unique<Camera>(lookfrom, lookat, vup, vfov, aspect, aperture, focus);
 }
 
+class TriangleMeshEmissiveSubset : public Hittable {
+public:
+    TriangleMeshEmissiveSubset(const TriangleMesh* mesh, std::vector<int> tri_indices)
+        : mesh_(mesh), tri_indices_(std::move(tri_indices)) {
+        build_area_cdf();
+    }
+
+    bool hit(const Ray& r, double t_min, double t_max,
+             HitRecord& rec) const override {
+        bool hit_any = false;
+        double closest = t_max;
+        for (int tri_idx : tri_indices_) {
+            HitRecord tmp;
+            if (mesh_->hit_triangle(tri_idx, r, t_min, closest, tmp)) {
+                rec = tmp;
+                closest = tmp.t;
+                hit_any = true;
+            }
+        }
+        return hit_any;
+    }
+
+    bool bounding_box(AABB& output_box) const override {
+        bool first = true;
+        for (int tri_idx : tri_indices_) {
+            Point3 p0, p1, p2;
+            if (!triangle_points(tri_idx, p0, p1, p2)) continue;
+            AABB box;
+            Triangle(p0, p1, p2).bounding_box(box);
+            output_box = first ? box : AABB::surrounding_box(output_box, box);
+            first = false;
+        }
+        return !first;
+    }
+
+    Point3 sample_point(double r1, double r2, Vec3* normal_out = nullptr) const override {
+        if (area_cdf_.empty() || area_tri_indices_.empty() || total_area_ <= 0) return Point3();
+
+        double target = r1 * total_area_;
+        auto it = std::lower_bound(area_cdf_.begin(), area_cdf_.end(), target);
+        int local_idx = static_cast<int>(std::distance(area_cdf_.begin(), it));
+        if (local_idx >= static_cast<int>(area_tri_indices_.size())) {
+            local_idx = static_cast<int>(area_tri_indices_.size()) - 1;
+        }
+
+        double previous = local_idx > 0 ? area_cdf_[local_idx - 1] : 0.0;
+        double span = area_cdf_[local_idx] - previous;
+        double local_r1 = span > 0 ? (target - previous) / span : 0.0;
+
+        Point3 p0, p1, p2;
+        if (!triangle_points(area_tri_indices_[local_idx], p0, p1, p2)) return Point3();
+
+        double sq = std::sqrt(std::clamp(local_r1, 0.0, 1.0));
+        double b1 = 1.0 - sq;
+        double b2 = sq * (1.0 - r2);
+        double b0 = sq * r2;
+
+        if (normal_out) {
+            Vec3 n = cross(p1 - p0, p2 - p0);
+            double len = n.length();
+            *normal_out = len > 1e-12 ? n / len : Vec3(0, 1, 0);
+        }
+        return b0 * p0 + b1 * p1 + b2 * p2;
+    }
+
+    double area() const override {
+        return total_area_;
+    }
+
+private:
+    const TriangleMesh* mesh_;
+    std::vector<int> tri_indices_;
+    std::vector<int> area_tri_indices_;
+    std::vector<double> area_cdf_;
+    double total_area_ = 0;
+
+    bool triangle_points(int tri_idx, Point3& p0, Point3& p1, Point3& p2) const {
+        if (!mesh_ || tri_idx < 0) return false;
+        size_t base = static_cast<size_t>(tri_idx) * 3;
+        if (base + 2 >= mesh_->indices.size()) return false;
+        int i0 = mesh_->indices[base + 0];
+        int i1 = mesh_->indices[base + 1];
+        int i2 = mesh_->indices[base + 2];
+        if (i0 < 0 || i1 < 0 || i2 < 0) return false;
+        if (static_cast<size_t>(i0) >= mesh_->vertices.size() ||
+            static_cast<size_t>(i1) >= mesh_->vertices.size() ||
+            static_cast<size_t>(i2) >= mesh_->vertices.size()) {
+            return false;
+        }
+        p0 = mesh_->vertices[static_cast<size_t>(i0)];
+        p1 = mesh_->vertices[static_cast<size_t>(i1)];
+        p2 = mesh_->vertices[static_cast<size_t>(i2)];
+        return true;
+    }
+
+    double triangle_area(int tri_idx) const {
+        Point3 p0, p1, p2;
+        if (!triangle_points(tri_idx, p0, p1, p2)) return 0;
+        return 0.5 * cross(p1 - p0, p2 - p0).length();
+    }
+
+    void build_area_cdf() {
+        area_tri_indices_.clear();
+        area_cdf_.clear();
+        total_area_ = 0;
+        for (int tri_idx : tri_indices_) {
+            double a = triangle_area(tri_idx);
+            if (a <= 1e-20) continue;
+            total_area_ += a;
+            area_tri_indices_.push_back(tri_idx);
+            area_cdf_.push_back(total_area_);
+        }
+    }
+};
+
+inline void collect_emissive_objects(Scene& scene) {
+    scene.emissive_objects.clear();
+    scene.emissive_samplers.clear();
+    for (Hittable* obj : scene.primitives.objects) {
+        Sphere* sph = dynamic_cast<Sphere*>(obj);
+        if (sph && sph->material && sph->material->is_emissive()) {
+            Emissive* em = static_cast<Emissive*>(sph->material);
+            scene.emissive_objects.push_back({sph, em->emission});
+            continue;
+        }
+        Triangle* tri = dynamic_cast<Triangle*>(obj);
+        if (tri && tri->material && tri->material->is_emissive()) {
+            Emissive* em = static_cast<Emissive*>(tri->material);
+            scene.emissive_objects.push_back({tri, em->emission});
+            continue;
+        }
+        TriangleMesh* mesh = dynamic_cast<TriangleMesh*>(obj);
+        if (mesh) {
+            std::vector<Material*> emissive_materials;
+            std::vector<std::vector<int>> tris_by_material;
+            for (size_t tri_idx = 0; tri_idx < mesh->material_per_tri.size(); tri_idx++) {
+                Material* mat = mesh->material_per_tri[tri_idx];
+                if (!mat || !mat->is_emissive()) continue;
+
+                size_t group = 0;
+                for (; group < emissive_materials.size(); group++) {
+                    if (emissive_materials[group] == mat) break;
+                }
+                if (group == emissive_materials.size()) {
+                    emissive_materials.push_back(mat);
+                    tris_by_material.push_back(std::vector<int>());
+                }
+                tris_by_material[group].push_back(static_cast<int>(tri_idx));
+            }
+
+            for (size_t group = 0; group < emissive_materials.size(); group++) {
+                Emissive* em = dynamic_cast<Emissive*>(emissive_materials[group]);
+                if (!em) continue;
+                auto sampler = std::make_unique<TriangleMeshEmissiveSubset>(
+                    mesh, tris_by_material[group]);
+                if (sampler->area() <= 0) continue;
+                Hittable* sampler_ptr = sampler.get();
+                scene.emissive_samplers.push_back(std::move(sampler));
+                scene.emissive_objects.push_back({sampler_ptr, em->emission});
+            }
+        }
+    }
+}
+
 inline void load_scene(const std::string& path,
                        Scene& scene,
                        const SceneLoadOptions& options = SceneLoadOptions()) {
@@ -617,6 +782,8 @@ inline void load_scene(const std::string& path,
     scene.has_mesh_bounds = false;
     scene.ambient_light = Color(0.04, 0.04, 0.04);
     scene.lights.clear();
+    scene.emissive_objects.clear();
+    scene.emissive_samplers.clear();
 
     JsonValue root = parse_json_file(path);
     std::filesystem::path scene_dir = std::filesystem::absolute(path).parent_path();
@@ -755,31 +922,7 @@ inline void load_scene(const std::string& path,
         scene.world = std::make_unique<LinearBVH>(scene.primitives.objects);
     }
 
-    for (Hittable* obj : scene.primitives.objects) {
-        Sphere* sph = dynamic_cast<Sphere*>(obj);
-        if (sph && sph->material && sph->material->is_emissive()) {
-            Emissive* em = static_cast<Emissive*>(sph->material);
-            scene.emissive_objects.push_back({sph, em->emission});
-            continue;
-        }
-        Triangle* tri = dynamic_cast<Triangle*>(obj);
-        if (tri && tri->material && tri->material->is_emissive()) {
-            Emissive* em = static_cast<Emissive*>(tri->material);
-            scene.emissive_objects.push_back({tri, em->emission});
-            continue;
-        }
-        TriangleMesh* mesh = dynamic_cast<TriangleMesh*>(obj);
-        if (mesh) {
-            bool any_emissive = false;
-            for (Material* m : mesh->material_per_tri) {
-                if (m && m->is_emissive()) { any_emissive = true; break; }
-            }
-            if (any_emissive) {
-                scene.emissive_objects.push_back({mesh,
-                    static_cast<Emissive*>(mesh->material_per_tri[0])->emission});
-            }
-        }
-    }
+    collect_emissive_objects(scene);
 }
 
 #endif

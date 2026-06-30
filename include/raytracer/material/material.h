@@ -172,24 +172,11 @@ public:
                  Color& emission) const override {
         emission = Color(0, 0, 0);
 
-        Color base = base_color(rec);
-        double met = metallic->value(rec.u, rec.v, rec.p).x;
-        double rough = std::max(0.001, roughness->value(rec.u, rec.v, rec.p).x);
-        met = std::clamp(met, 0.0, 1.0);
-        rough = std::clamp(rough, 0.001, 1.0);
-
-        Vec3 n = rec.normal;
-        if (has_normal_map && rec.has_tangent) {
-            Color ns = normal->value(rec.u, rec.v, rec.p);
-            Vec3 tn = Vec3(2 * ns.x - 1, 2 * ns.y - 1, 2 * ns.z - 1).normalized();
-            Vec3 T = rec.tangent.normalized();
-            Vec3 B = cross(n, T).normalized();
-            n = (T * tn.x + B * tn.y + n * tn.z).normalized();
-            if (dot(n, rec.normal) < 0) n = -n;
-        }
-
+        double rough = roughness_value(rec);
+        Vec3 n = shading_normal(rec);
         Vec3 v = (-r_in.direction).normalized();
         double n_dot_v = std::max(0.0, dot(n, v));
+        if (n_dot_v <= 0) return false;
 
         Vec3 up = std::fabs(n.x) > 0.9 ? Vec3(0, 1, 0) : Vec3(1, 0, 0);
         Vec3 tbn_t = cross(up, n).normalized();
@@ -206,11 +193,33 @@ public:
 
         Vec3 scattered_dir = (2 * dot(v, h) * h - v).normalized();
         double n_dot_l = std::max(0.0, dot(n, scattered_dir));
+        if (n_dot_l <= 0 || dot(rec.normal, scattered_dir) <= 0) return false;
+
+        scattered = Ray(rec.p, scattered_dir);
+        double pdf_val = pdf(r_in, scattered, rec);
+        if (pdf_val <= 0) return false;
+
+        attenuation = f(r_in, scattered, rec) * n_dot_l / pdf_val;
+        return true;
+    }
+
+    Color f(const Ray& r_in, const Ray& scattered, const HitRecord& rec) const override {
+        Vec3 n = shading_normal(rec);
+        Vec3 v = (-r_in.direction).normalized();
+        Vec3 l = scattered.direction.normalized();
+        double n_dot_l = std::max(0.0, dot(n, l));
+        double n_dot_v = std::max(0.0, dot(n, v));
+        if (n_dot_l <= 0 || n_dot_v <= 0) return Color(0, 0, 0);
+
+        Vec3 h = (v + l).normalized();
         double n_dot_h = std::max(0.0, dot(n, h));
         double v_dot_h = std::max(0.0, dot(v, h));
+        if (n_dot_h <= 0 || v_dot_h <= 0) return Color(0, 0, 0);
 
-        if (n_dot_l <= 0 || n_dot_v <= 0 || v_dot_h <= 0) return false;
-
+        Color base = base_color(rec);
+        double met = metallic_value(rec);
+        double rough = roughness_value(rec);
+        double alpha = rough * rough;
         double a2 = alpha * alpha;
         double denom_d = n_dot_h * n_dot_h * (a2 - 1) + 1;
         double D = a2 / (pi * denom_d * denom_d);
@@ -227,17 +236,53 @@ public:
         Color kD = (Color(1, 1, 1) - F) * (1 - met);
         Color diffuse = kD * base / pi;
         Color specular = F * (D * G) / (4 * n_dot_l * n_dot_v);
-        Color brdf = diffuse + specular;
-
-        double pdf = (D * n_dot_h) / (4 * v_dot_h);
-        if (pdf <= 0) return false;
-
-        attenuation = brdf * n_dot_l / pdf;
-        scattered = Ray(rec.p, scattered_dir);
-        return true;
+        return diffuse + specular;
     }
 
-    bool is_specular() const override { return true; }
+    double pdf(const Ray& r_in, const Ray& scattered, const HitRecord& rec) const override {
+        Vec3 n = shading_normal(rec);
+        Vec3 v = (-r_in.direction).normalized();
+        Vec3 l = scattered.direction.normalized();
+        if (dot(n, l) <= 0 || dot(n, v) <= 0) return 0;
+
+        Vec3 h = (v + l).normalized();
+        double n_dot_h = std::max(0.0, dot(n, h));
+        double v_dot_h = std::max(0.0, dot(v, h));
+        if (n_dot_h <= 0 || v_dot_h <= 0) return 0;
+
+        double rough = roughness_value(rec);
+        double alpha = rough * rough;
+        double a2 = alpha * alpha;
+        double denom_d = n_dot_h * n_dot_h * (a2 - 1) + 1;
+        double D = a2 / (pi * denom_d * denom_d);
+        double pdf_val = (D * n_dot_h) / (4 * v_dot_h);
+        return pdf_val > 0 && std::isfinite(pdf_val) ? pdf_val : 0;
+    }
+
+    bool is_specular() const override { return false; }
+
+private:
+    double metallic_value(const HitRecord& rec) const {
+        return std::clamp(metallic->value(rec.u, rec.v, rec.p).x, 0.0, 1.0);
+    }
+
+    double roughness_value(const HitRecord& rec) const {
+        double rough = roughness->value(rec.u, rec.v, rec.p).x;
+        return std::clamp(rough, 0.001, 1.0);
+    }
+
+    Vec3 shading_normal(const HitRecord& rec) const {
+        Vec3 n = rec.normal;
+        if (has_normal_map && rec.has_tangent) {
+            Color ns = normal->value(rec.u, rec.v, rec.p);
+            Vec3 tn = Vec3(2 * ns.x - 1, 2 * ns.y - 1, 2 * ns.z - 1).normalized();
+            Vec3 T = rec.tangent.normalized();
+            Vec3 B = cross(n, T).normalized();
+            n = (T * tn.x + B * tn.y + n * tn.z).normalized();
+            if (dot(n, rec.normal) < 0) n = -n;
+        }
+        return n;
+    }
 };
 
 // Emissive material (area light)
