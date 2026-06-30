@@ -41,8 +41,8 @@ g++ -std=c++17 -O2 -Wall -Wextra -Iinclude -o raytracer src/main.cpp
 # 指定场景文件
 ./run.sh --scene scenes/three_balls.json
 
-# 覆盖输出路径和采样数
-./run.sh --scene scenes/three_balls.json --out my.ppm --samples 64
+# 覆盖输出路径和采样数；.png 会直接写 PNG
+./run.sh --scene scenes/three_balls.json --out my.png --samples 64
 
 # 高采样渲染时可指定线程数；不指定时默认使用 CPU 硬件线程数
 ./run.sh --model models/glb/toyota_mark_ii_jzx100.glb --samples 64 --threads 8 --out car_64.ppm
@@ -68,16 +68,18 @@ g++ -std=c++17 -O2 -Wall -Wextra -Iinclude -o raytracer src/main.cpp
 | `--scene <path>` | 场景 JSON 文件 | `scenes/default.json` |
 | `--model <path>` | OBJ/GLB 模型文件，覆盖场景中 `mesh` 的 `obj/path` | 未指定时使用场景配置 |
 | `--obj <path>` | `--model` 的兼容别名 | 未指定时使用场景配置 |
-| `--out <path>` | 输出 PPM 文件（覆盖场景配置） | 场景中的 `output` |
+| `--out <path>` | 输出图像路径，支持 `.ppm` / `.png`（覆盖场景配置） | 场景中的 `output` |
 | `--samples <n>` | 每像素采样数（覆盖场景配置） | 场景中的 `samples` |
 | `--threads <n>` | 渲染线程数，用于高采样加速 | CPU 硬件线程数 |
+| `--exposure <n>` | 显示曝光倍率（覆盖场景配置） | 场景中的 `exposure` 或 1.0 |
+| `--tone-map <mode>` | 色调映射：`aces`、`reinhard`、`none` | 场景中的 `tone_map` 或 `aces` |
 | `--direct-only` | 只计算直接光照、阴影和环境光，关闭递归随机反弹以减少噪声 | 关闭 |
 | `--preview` | 快速预览模式：启用 `--direct-only`，且未指定 `--samples` 时使用 1 sample | 关闭 |
 | `--help` | 显示帮助 | — |
 
 ### 预览
 
-PPM 可被多数看图软件直接打开。macOS 下转 PNG：
+输出路径以 `.png` 结尾时会直接写 PNG；其他扩展名保持旧行为写 PPM。PPM 可被多数看图软件直接打开。macOS 下转 PNG：
 
 ```bash
 sips -s format png out.ppm --out out.png
@@ -108,7 +110,9 @@ open out.png
         "height": 400,
         "samples": 16,
         "max_depth": 32,
-        "output": "out.ppm"
+        "output": "out.png",
+        "tone_map": "aces",
+        "exposure": 1.0
     },
     "camera": {
         "lookfrom": [0, 0, 0],
@@ -166,7 +170,9 @@ open out.png
 | `height`　　| int　　| 400　　　　 | 图像高度　　　　　　　　　　　 |
 | `samples`　 | int　　| 16　　　　　| 每像素采样数，越大越细腻、越慢 |
 | `max_depth` | int　　| 32　　　　　| 光线递归深度上限　　　　　　　 |
-| `output`　　| string | `"out.ppm"` | 输出文件路径　　　　　　　　　 |
+| `output`　　| string | `"out.ppm"` | 输出文件路径，`.png` 直接写 PNG，其他扩展名写 PPM |
+| `tone_map`  | string | `"aces"`     | 显示色调映射：`aces`、`reinhard`、`none` |
+| `exposure`  | float  | 1.0          | 显示曝光倍率 |
 
 **camera**（均可选，有默认值）
 
@@ -394,7 +400,7 @@ raytracer/
 │   │   └── texture.h             纹理基类 + SolidColor / Image / Tinted / Checker
 │   ├── render/                   模块 D：渲染
 │   │   ├── camera.h              相机：FOV、lookat、景深
-│   │   ├── image.h               PPM 写入 + 伽马校正
+│   │   ├── image.h               PPM/PNG 写入 + tone mapping + 伽马校正
 │   │   └── texture.h             渲染端纹理工具
 │   └── scene/                    模块 D：场景
 │       ├── json.h                最小 JSON 解析器（零依赖）
@@ -404,6 +410,7 @@ raytracer/
 ├── src/main.cpp                  命令行解析 + 渲染主循环 + ray_color 递归
 ├── third_party/                  第三方 header-only 库
 │   ├── stb_image.h               PNG/JPG 解码
+│   ├── stb_image_write.h         PNG 写入
 │   └── tiny_obj_loader.h         OBJ 解析
 ├── scenes/                       场景文件目录
 ├── models/                       测试模型（OBJ/GLB）
@@ -448,4 +455,4 @@ raytracer/
 
 - C++17 编译器（g++ / clang++ / MSVC 均可）
 - CMake ≥ 3.10（可选）
-- 第三方 header-only 库（已包含在 `third_party/`）：`stb_image.h`（图片解码）、`tiny_obj_loader.h`（OBJ 解析）
+- 第三方 header-only 库（已包含在 `third_party/`）：`stb_image.h`（图片解码）、`stb_image_write.h`（PNG 写入）、`tiny_obj_loader.h`（OBJ 解析）

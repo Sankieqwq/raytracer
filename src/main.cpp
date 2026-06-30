@@ -3,6 +3,7 @@
 #include "tiny_obj_loader.h"
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
+#define STB_IMAGE_WRITE_IMPLEMENTATION
 
 #include "raytracer/math/vec3.h"
 #include "raytracer/render/image.h"
@@ -176,9 +177,11 @@ void print_usage(const char* prog) {
               << "  --scene <path>     scene JSON file (default: scenes/default.json)\n"
               << "  --model <path>     OBJ/GLB model path (uses scenes/obj.json if --scene is omitted)\n"
               << "  --obj <path>       alias of --model\n"
-              << "  --out <path>       output PPM file (overrides scene)\n"
+              << "  --out <path>       output image path, .ppm or .png (overrides scene)\n"
               << "  --samples <n>      samples per pixel (overrides scene)\n"
               << "  --threads <n>      render worker threads (default: hardware concurrency)\n"
+              << "  --exposure <n>     display exposure multiplier (default: scene/default 1.0)\n"
+              << "  --tone-map <mode>  tone mapping: aces, reinhard, none\n"
               << "  --direct-only      disable recursive random bounces, use direct light + shadows only\n"
               << "  --preview          fast preview mode: direct-only and samples=1 unless overridden\n";
 }
@@ -189,6 +192,8 @@ int main(int argc, char* argv[]) {
     std::string out_override;
     std::string model_override;
     int samples_override = -1;
+    double exposure_override = -1.0;
+    std::string tone_map_override;
     RenderOptions render_options;
 
     for (int i = 1; i < argc; i++) {
@@ -208,6 +213,10 @@ int main(int argc, char* argv[]) {
                 std::cerr << "--threads must be greater than 0\n";
                 return 1;
             }
+        } else if (arg == "--exposure" && i + 1 < argc) {
+            exposure_override = std::stod(argv[++i]);
+        } else if (arg == "--tone-map" && i + 1 < argc) {
+            tone_map_override = argv[++i];
         } else if (arg == "--direct-only") {
             render_options.direct_only = true;
         } else if (arg == "--preview") {
@@ -245,6 +254,8 @@ int main(int argc, char* argv[]) {
     }
 
     if (!out_override.empty()) scene.output = out_override;
+    if (exposure_override > 0) scene.output_options.exposure = exposure_override;
+    if (!tone_map_override.empty()) scene.output_options.tone_map = parse_tone_map_mode(tone_map_override);
     if (samples_override > 0)  {
         scene.samples = samples_override;
     } else if (render_options.preview) {
@@ -310,7 +321,7 @@ int main(int argc, char* argv[]) {
     }
     std::cerr << "\rProgress: 100%\n";
 
-    write_ppm(scene.output, scene.width, scene.height, pixels, scene.samples);
+    write_image(scene.output, scene.width, scene.height, pixels, scene.samples, scene.output_options);
     std::cout << "Wrote " << scene.output << "\n";
     return 0;
 }

@@ -189,6 +189,26 @@ void test_pbr_exposes_brdf_and_pdf_for_direct_lighting() {
     check(finite_vec(brdf) && positive_color(brdf), "PBR BRDF should be finite and positive for a lit direction");
 }
 
+void test_display_color_exposure_and_tone_mapping() {
+    ImageOutputOptions opts;
+    opts.exposure = 2.0;
+    opts.tone_map = ToneMapMode::Reinhard;
+    Color out = to_display_color(Color(1.0, 0.5, 0.0), 1, opts);
+
+    check(out.x > out.y, "tone mapped red channel should remain brighter than green");
+    check(out.x < 1.0 && out.y < 1.0, "tone mapped display color should stay below one");
+    check(out.z == 0.0, "zero input channel should stay zero");
+}
+
+void test_output_format_detection() {
+    check(output_format_for_path("image.ppm") == ImageOutputFormat::PPM,
+          "ppm extension should select PPM output");
+    check(output_format_for_path("image.png") == ImageOutputFormat::PNG,
+          "png extension should select PNG output");
+    check(output_format_for_path("image.unknown") == ImageOutputFormat::PPM,
+          "unknown extension should preserve old PPM behavior");
+}
+
 void test_collect_emissive_objects_uses_only_emissive_mesh_triangles() {
     Scene scene;
 
@@ -245,6 +265,8 @@ int main() {
     test_obj_loader_handles_mixed_missing_attributes();
     test_triangle_mesh_exposes_internal_acceleration();
     test_pbr_exposes_brdf_and_pdf_for_direct_lighting();
+    test_display_color_exposure_and_tone_mapping();
+    test_output_format_detection();
     test_collect_emissive_objects_uses_only_emissive_mesh_triangles();
     test_mirror_glass_water_acceptance_scene_loads();
 

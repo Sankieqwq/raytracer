@@ -12,6 +12,7 @@
 #include "raytracer/math/mat4.h"
 #include "raytracer/math/vec3.h"
 #include "raytracer/render/camera.h"
+#include "raytracer/render/image.h"
 #include "raytracer/scene/glb.h"
 #include "raytracer/scene/json.h"
 #include "raytracer/scene/obj.h"
@@ -48,6 +49,7 @@ struct Scene {
     int samples = 16;
     int max_depth = 32;
     std::string output = "out.ppm";
+    ImageOutputOptions output_options;
 
     std::unique_ptr<Camera> camera;
     HittableList primitives;
@@ -795,6 +797,8 @@ inline void load_scene(const std::string& path,
         if (img.has("samples"))   scene.samples   = static_cast<int>(img.at("samples").numVal);
         if (img.has("max_depth")) scene.max_depth = static_cast<int>(img.at("max_depth").numVal);
         if (img.has("output"))    scene.output    = img.at("output").strVal;
+        if (img.has("exposure"))  scene.output_options.exposure = img.at("exposure").numVal;
+        if (img.has("tone_map"))  scene.output_options.tone_map = parse_tone_map_mode(img.at("tone_map").strVal);
     }
 
     double aspect = double(scene.width) / scene.height;
