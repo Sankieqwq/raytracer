@@ -70,6 +70,15 @@ inline Color direct_delta_lights(const HitRecord& rec, const Scene& scene) {
     return result;
 }
 
+inline Color background_color(const Ray& r, const Scene& scene) {
+    if (scene.background_type == BackgroundType::Sky) {
+        Vec3 unit_dir = r.direction.normalized();
+        double t = 0.5 * (unit_dir.y + 1.0);
+        return (1 - t) * Color(1.0, 1.0, 1.0) + t * Color(0.5, 0.7, 1.0);
+    }
+    return scene.background_color;
+}
+
 inline Color ray_color(const Ray& r, const Scene& scene, int depth,
                        const RenderOptions& options,
                        double prev_pdf,
@@ -78,9 +87,7 @@ inline Color ray_color(const Ray& r, const Scene& scene, int depth,
 
     HitRecord rec;
     if (!scene.world->hit(r, 0.001, infinity, rec)) {
-        Vec3 unit_dir = r.direction.normalized();
-        double t = 0.5 * (unit_dir.y + 1.0);
-        return (1 - t) * Color(1.0, 1.0, 1.0) + t * Color(0.5, 0.7, 1.0);
+        return background_color(r, scene);
     }
 
     if (rec.material && rec.material->is_emissive()) {

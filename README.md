@@ -65,7 +65,9 @@ g++ -std=c++17 -O2 -Wall -Wextra -Iinclude -o raytracer src/main.cpp
 
 项目额外提供了一个 Blender RenderEngine 插件，可以直接渲染 Blender 当前场景，不需要手写 `scenes/*.json`，也不会影响原有 CLI 渲染路径。插件支持本地 bridge 渲染，也支持通过 HTTP 连接远程 `raytracer_server`。
 
-Blender 插件的安装、构建、参数说明和当前限制见 [integrations/blender/README.md](integrations/blender/README.md)。
+Blender 插件的安装、构建、参数说明、完整支持清单和当前限制见 [integrations/blender/README.md](integrations/blender/README.md)。支持清单会明确说明 Blender 中的相机、模型、世界、灯光、材质和调试缓存如何导出，以及渲染核心会如何近似处理。
+
+渲染核心的一条光线如何经过 `ray_color()`、直接光照、发光物体采样、BSDF 反弹和 MIS，见 [docs/render-flow.md](docs/render-flow.md)。
 
 ### 命令行参数
 
@@ -186,10 +188,11 @@ open out.png
 | `focus_dist` | float | 1.0 | 对焦距离 |
 | `auto` | bool | false | 为 true 时根据模型包围盒自动放置相机，可搭配 `vfov` 使用 |
 
-**lighting / lights**（均可选；不写 `lights` 时使用一组默认方向光和点光源）
+**background / lighting / lights**（均可选；CLI 会为未显式配置的场景提供展示友好的默认背景和光照）
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
+| `background` | object 或 [r,g,b] | 背景设置；数组表示纯色背景，object 支持 `type: "solid"` / `"sky"` 和 `color` |
 | `lighting.ambient` | [r,g,b] | 环境光颜色，影响阴影内的最低亮度 |
 | `lights[].type` | string | 支持 `"directional"` 和 `"point"` |
 | `lights[].direction` | [x,y,z] | 方向光方向，表示光线照射方向 |
@@ -198,6 +201,12 @@ open out.png
 | `lights[].intensity` | float | 光源强度；点光源会随距离平方衰减 |
 
 渲染器会对点光源和方向光发射阴影射线，被遮挡的光源不会给当前命中点贡献直接光照。
+
+CLI 会保留这些默认项，这是命令行场景格式的易用性设计：用更少的参数也能快速得到适合展示和调试的基础光照效果。需要完全控制场景时，可以显式关闭对应默认项：
+
+- 未写 `background` 时使用蓝白天空背景；显式写 `{"type":"solid","color":[0,0,0]}` 可关闭天空。
+- 未写 `lighting.ambient` 时使用弱环境光 `[0.04,0.04,0.04]`；显式写 `[0,0,0]` 可关闭环境光。
+- 未写 `lights` 时使用默认方向光和点光源；显式写空数组 `[]` 可关闭默认灯光。
 
 **ground**（可选；用于自动生成接收阴影的地面）
 

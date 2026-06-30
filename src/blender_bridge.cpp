@@ -96,7 +96,12 @@ int main(int argc, char* argv[]) {
               << " image=" << scene.width << "x" << scene.height
               << " samples=" << scene.samples
               << " depth=" << scene.max_depth
-              << " primitives=" << scene.primitive_count << "\n";
+              << " primitives=" << scene.primitive_count
+              << " lights=" << scene.lights.size()
+              << " ambient=(" << scene.ambient_light.x << ","
+              << scene.ambient_light.y << "," << scene.ambient_light.z << ")"
+              << " background=" << (scene.background_type == BackgroundType::Sky ? "sky" : "solid")
+              << "\n";
 
     RenderCallbacks callbacks;
     callbacks.progress = [](double progress) {

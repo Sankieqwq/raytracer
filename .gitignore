@@ -1,10 +1,14 @@
 # Build
 build/
-./raytracer
 
 # Render output
 *.ppm
 *.png
+*.log
+*.rgba32f
+
+# Local debug/cache output
+debug/
 
 # executable
 /raytracer
