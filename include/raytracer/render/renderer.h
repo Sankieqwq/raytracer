@@ -188,6 +188,15 @@ inline RenderOutput render_scene(const Scene& scene,
     std::atomic<int> last_pct{-1};
     std::atomic<bool> cancelled{false};
 
+    auto cancel_requested = [&]() {
+        if (cancelled.load()) return true;
+        if (callbacks.should_cancel && callbacks.should_cancel()) {
+            cancelled.store(true);
+            return true;
+        }
+        return false;
+    };
+
     auto report_progress = [&](int done_rows) {
         if (!callbacks.progress || scene.height <= 0) return;
         int pct = 100 * done_rows / scene.height;
@@ -199,19 +208,16 @@ inline RenderOutput render_scene(const Scene& scene,
     };
 
     auto render_worker = [&]() {
-        while (!cancelled.load()) {
-            if (callbacks.should_cancel && callbacks.should_cancel()) {
-                cancelled.store(true);
-                break;
-            }
-
+        while (!cancel_requested()) {
             int j = next_row.fetch_add(1);
             if (j >= scene.height) break;
 
             int sample_row = scene.height - 1 - j;
             for (int i = 0; i < scene.width; i++) {
+                if (cancel_requested()) break;
                 Color col(0, 0, 0);
                 for (int s = 0; s < scene.samples; s++) {
+                    if ((s & 15) == 0 && cancel_requested()) break;
                     double offset_x = (options.direct_only && scene.samples == 1) ? 0.5 : random_double();
                     double offset_y = (options.direct_only && scene.samples == 1) ? 0.5 : random_double();
                     double u = (i + offset_x) / (scene.width - 1);
@@ -222,6 +228,7 @@ inline RenderOutput render_scene(const Scene& scene,
                               static_cast<size_t>(i)] = col;
             }
 
+            if (cancelled.load()) break;
             int done = rows_done.fetch_add(1) + 1;
             report_progress(done);
         }

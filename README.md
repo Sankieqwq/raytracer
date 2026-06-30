@@ -63,7 +63,7 @@ g++ -std=c++17 -O2 -Wall -Wextra -Iinclude -o raytracer src/main.cpp
 
 ### Blender 5.1 渲染器入口
 
-项目额外提供了一个 Blender RenderEngine 插件，可以直接渲染 Blender 当前场景，不需要手写 `scenes/*.json`，也不会影响原有 CLI 渲染路径。
+项目额外提供了一个 Blender RenderEngine 插件，可以直接渲染 Blender 当前场景，不需要手写 `scenes/*.json`，也不会影响原有 CLI 渲染路径。插件支持本地 bridge 渲染，也支持通过 HTTP 连接远程 `raytracer_server`。
 
 Blender 插件的安装、构建、参数说明和当前限制见 [integrations/blender/README.md](integrations/blender/README.md)。
 

@@ -5,14 +5,11 @@
 #include "stb_image.h"
 
 #include "raytracer/render/renderer.h"
+#include "raytracer/render/rgba32f.h"
 #include "raytracer/scene/scene.h"
 #include <algorithm>
-#include <cmath>
-#include <cstdint>
 #include <cstdlib>
 #include <exception>
-#include <filesystem>
-#include <fstream>
 #include <iostream>
 #include <string>
 
@@ -73,47 +70,6 @@ bool parse_args(int argc, char* argv[], BridgeArgs& args) {
         return false;
     }
     return true;
-}
-
-void write_u32(std::ofstream& out, uint32_t value) {
-    unsigned char bytes[4] = {
-        static_cast<unsigned char>(value & 0xffu),
-        static_cast<unsigned char>((value >> 8) & 0xffu),
-        static_cast<unsigned char>((value >> 16) & 0xffu),
-        static_cast<unsigned char>((value >> 24) & 0xffu),
-    };
-    out.write(reinterpret_cast<const char*>(bytes), 4);
-}
-
-float finite_channel(double v) {
-    if (!std::isfinite(v)) return 0.0f;
-    return static_cast<float>(std::max(0.0, v));
-}
-
-void write_rgba32f(const std::string& path, const RenderOutput& output) {
-    std::filesystem::path out_path(path);
-    if (out_path.has_parent_path()) {
-        std::filesystem::create_directories(out_path.parent_path());
-    }
-
-    std::ofstream out(path, std::ios::binary);
-    if (!out) throw std::runtime_error("Cannot open RGBA output: " + path);
-
-    const char magic[8] = {'R', 'T', 'R', 'G', 'B', 'A', 'F', '1'};
-    out.write(magic, 8);
-    write_u32(out, static_cast<uint32_t>(output.width));
-    write_u32(out, static_cast<uint32_t>(output.height));
-
-    double scale = output.samples > 0 ? 1.0 / output.samples : 1.0;
-    for (const Color& raw : output.pixels) {
-        float rgba[4] = {
-            finite_channel(raw.x * scale),
-            finite_channel(raw.y * scale),
-            finite_channel(raw.z * scale),
-            1.0f,
-        };
-        out.write(reinterpret_cast<const char*>(rgba), sizeof(rgba));
-    }
 }
 
 }  // namespace

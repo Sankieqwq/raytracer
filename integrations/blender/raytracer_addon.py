@@ -15,6 +15,10 @@ import os
 import struct
 import subprocess
 import tempfile
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from pathlib import Path
 
 import bpy
@@ -354,21 +358,135 @@ class RemoteHttpRenderer(RendererClient):
     def __init__(self, endpoint):
         self.endpoint = endpoint
 
+    def base_url(self):
+        if not self.endpoint:
+            raise RuntimeError("Remote renderer endpoint is empty")
+        base = self.endpoint.rstrip("/")
+        if base.endswith("/render"):
+            base = base[:-len("/render")]
+        return base
+
+    def open_json(self, request, timeout):
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            details = exc.read().decode("utf-8", errors="replace").strip()
+            raise RuntimeError("Remote renderer failed: HTTP " + str(exc.code) + ("\n" + details if details else ""))
+        except urllib.error.URLError as exc:
+            raise RuntimeError("Remote renderer unavailable: " + str(exc.reason))
+
+    def request_timeout(self, deadline):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise RuntimeError("Remote renderer timed out")
+        return max(1, min(10, int(remaining)))
+
+    def url(self, path, params=None):
+        result = self.base_url() + path
+        if params:
+            result += "?" + urllib.parse.urlencode(params)
+        return result
+
+    def cancel_job(self, job_id, deadline):
+        quoted = urllib.parse.quote(job_id, safe="")
+        request = urllib.request.Request(
+            self.url("/jobs/" + quoted + "/cancel"),
+            data=b"",
+            method="POST",
+        )
+        try:
+            self.open_json(request, self.request_timeout(deadline))
+        except RuntimeError:
+            pass
+
     def render(self, package, engine, settings):
-        raise RuntimeError("Remote renderer transport is reserved by the interface but not implemented yet")
+        deadline = time.monotonic() + max(1, int(settings.remote_timeout))
+        params = urllib.parse.urlencode({
+            "threads": max(1, int(settings.threads)),
+            "direct_only": "1" if settings.direct_only else "0",
+        })
+
+        body = json.dumps(package, separators=(",", ":")).encode("utf-8")
+        create_request = urllib.request.Request(
+            self.url("/jobs") + "?" + params,
+            data=body,
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "X-Raytracer-Protocol": str(PROTOCOL_VERSION),
+            },
+            method="POST",
+        )
+
+        if engine.test_break():
+            raise RuntimeError("Render cancelled")
+
+        create_response = self.open_json(create_request, self.request_timeout(deadline))
+        job_id = create_response.get("job_id")
+        if not job_id:
+            raise RuntimeError("Remote renderer did not return a job id")
+
+        quoted_job_id = urllib.parse.quote(job_id, safe="")
+        progress_url = self.url("/jobs/" + quoted_job_id + "/progress")
+        result_url = self.url("/jobs/" + quoted_job_id + "/result")
+        engine.update_progress(0.0)
+
+        while True:
+            if engine.test_break():
+                self.cancel_job(job_id, deadline)
+                raise RuntimeError("Render cancelled")
+
+            progress_request = urllib.request.Request(progress_url, headers={"Accept": "application/json"})
+            status = self.open_json(progress_request, self.request_timeout(deadline))
+            state = status.get("status", "unknown")
+            progress = float(status.get("progress", 0.0))
+            engine.update_progress(max(0.0, min(0.98, progress)))
+
+            if state == "done":
+                break
+            if state == "cancelled":
+                raise RuntimeError("Remote render cancelled")
+            if state == "error":
+                raise RuntimeError("Remote renderer failed: " + str(status.get("error", "unknown error")))
+
+            time.sleep(0.5)
+
+        if engine.test_break():
+            self.cancel_job(job_id, deadline)
+            raise RuntimeError("Render cancelled")
+
+        result_request = urllib.request.Request(result_url, headers={"Accept": "application/octet-stream"})
+        try:
+            with urllib.request.urlopen(result_request, timeout=self.request_timeout(deadline)) as response:
+                result = response.read()
+        except urllib.error.HTTPError as exc:
+            details = exc.read().decode("utf-8", errors="replace").strip()
+            raise RuntimeError("Remote renderer failed: HTTP " + str(exc.code) + ("\n" + details if details else ""))
+        except urllib.error.URLError as exc:
+            raise RuntimeError("Remote renderer unavailable: " + str(exc.reason))
+
+        engine.update_progress(0.99)
+        return parse_rgba32f(result)
+
+
+def parse_rgba32f(data):
+    if len(data) < 16 or data[:8] != b"RTRGBAF1":
+        raise RuntimeError("Invalid raytracer result data")
+    width, height = struct.unpack("<II", data[8:16])
+    expected = 16 + width * height * 4 * 4
+    if len(data) < expected:
+        raise RuntimeError("Truncated raytracer result data")
+    pixels = array.array("f")
+    pixels.frombytes(data[16:expected])
+    if len(pixels) != width * height * 4:
+        raise RuntimeError("Invalid raytracer pixel data")
+    return RenderPixels(width, height, pixels)
 
 
 def read_rgba32f(path):
     with open(path, "rb") as f:
-        magic = f.read(8)
-        if magic != b"RTRGBAF1":
-            raise RuntimeError("Invalid raytracer result file")
-        width, height = struct.unpack("<II", f.read(8))
-        pixels = array.array("f")
-        pixels.fromfile(f, width * height * 4)
-        if len(pixels) != width * height * 4:
-            raise RuntimeError("Truncated raytracer result file")
-        return RenderPixels(width, height, pixels)
+        return parse_rgba32f(f.read())
 
 
 def default_bridge_path():
@@ -395,7 +513,7 @@ class RaytracerSettings(bpy.types.PropertyGroup):
         name="后端",
         items=[
             ("LOCAL", "本地", "使用本机 raytracer_blender_bridge 可执行文件"),
-            ("REMOTE", "远程", "预留网络渲染器客户端接口"),
+            ("REMOTE", "远程", "通过 HTTP 连接 raytracer_server 渲染当前场景"),
         ],
         default="LOCAL",
     )
@@ -408,8 +526,9 @@ class RaytracerSettings(bpy.types.PropertyGroup):
     remote_endpoint: StringProperty(
         name="远程地址",
         default="http://localhost:8080",
-        description="为未来远程渲染器预留的服务地址",
+        description="raytracer_server 的 HTTP 地址，例如 http://server:8080",
     )
+    remote_timeout: IntProperty(name="远程超时", default=600, min=1, max=86400)
     samples: IntProperty(name="采样数", default=16, min=1, max=4096)
     max_depth: IntProperty(name="最大深度", default=16, min=1, max=256)
     threads: IntProperty(name="线程数", default=8, min=1, max=128)
@@ -457,6 +576,7 @@ class RENDER_PT_raytracer_settings(bpy.types.Panel):
             layout.prop(settings, "bridge_path")
         else:
             layout.prop(settings, "remote_endpoint")
+            layout.prop(settings, "remote_timeout")
         layout.prop(settings, "samples")
         layout.prop(settings, "max_depth")
         layout.prop(settings, "threads")

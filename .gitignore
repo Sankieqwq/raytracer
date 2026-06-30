@@ -9,6 +9,7 @@ build/
 # executable
 /raytracer
 /raytracer_blender_bridge
+/raytracer_server
 __pycache__/
 *.pyc
 
