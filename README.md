@@ -255,6 +255,12 @@ open out.png
 | `scenes/texture_test.json` | 贴图采样验证 |
 | `scenes/textured_quad.json` | 带 UV 和棋盘纹理的最小贴图验证场景 |
 | `scenes/mirror_glass_water.json` | 镜面金属 + 玻璃 + 水面 + PBR + 自发光面积灯验收场景 |
+| `scenes/khronos_water_bottle.json` | Khronos WaterBottle 官方 GLB 验收场景 |
+| `scenes/khronos_transmission_test.json` | Khronos TransmissionTest 官方 GLB 验收场景 |
+
+### 官方测试资产
+
+Khronos 官方 glTF Sample Assets 通过 `scripts/fetch_khronos_assets.sh` 下载到 `models/khronos/`。资产来源、license 和 credit 记录在 `models/khronos/LICENSES.md`。
 
 ## OBJ / GLB 网格支持
 
