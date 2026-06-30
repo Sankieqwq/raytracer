@@ -5,6 +5,7 @@ build/
 # Render output
 *.ppm
 *.png
+!tests/golden/images/*.png
 
 # executable
 /raytracer

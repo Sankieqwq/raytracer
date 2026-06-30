@@ -1,0 +1,105 @@
+{
+    "image": {
+        "width": 128,
+        "height": 72,
+        "samples": 8,
+        "max_depth": 32,
+        "output": "/tmp/golden_mirror_glass_water.png",
+        "tone_map": "aces",
+        "exposure": 1.0,
+        "seed": 23456
+    },
+    "camera": {
+        "lookfrom": [0.0, 1.7, 5.2],
+        "lookat": [0.0, 0.45, -0.4],
+        "vup": [0.0, 1.0, 0.0],
+        "vfov": 38,
+        "aperture": 0.0
+    },
+    "lighting": {
+        "ambient": [0.015, 0.018, 0.022]
+    },
+    "lights": [
+        {
+            "type": "directional",
+            "direction": [-0.4, -1.0, -0.3],
+            "color": [0.75, 0.82, 1.0],
+            "intensity": 0.35
+        }
+    ],
+    "ground": {
+        "enabled": true,
+        "size": 7.0,
+        "y": -0.02,
+        "material": {
+            "type": "lambertian",
+            "albedo": [0.42, 0.43, 0.40]
+        }
+    },
+    "objects": [
+        {
+            "type": "sphere",
+            "center": [-1.15, 0.55, -0.45],
+            "radius": 0.55,
+            "material": {
+                "type": "metal",
+                "albedo": [0.93, 0.95, 1.0],
+                "fuzz": 0.0
+            }
+        },
+        {
+            "type": "sphere",
+            "center": [0.35, 0.58, -0.85],
+            "radius": 0.58,
+            "material": {
+                "type": "dielectric",
+                "ior": 1.52,
+                "albedo": [0.93, 0.98, 1.0]
+            }
+        },
+        {
+            "type": "sphere",
+            "center": [1.35, 0.32, 0.25],
+            "radius": 0.32,
+            "material": {
+                "type": "pbr",
+                "albedo": [0.20, 0.46, 0.62],
+                "metallic": 0.0,
+                "roughness": 0.18
+            }
+        },
+        {
+            "type": "triangles",
+            "vertices": [
+                [-2.5, 0.03, -1.45],
+                [2.5, 0.03, -1.45],
+                [2.5, 0.03, -3.45],
+                [-2.5, 0.03, -3.45]
+            ],
+            "indices": [0, 1, 2, 0, 2, 3],
+            "normals": [
+                [0, 1, 0],
+                [0, 1, 0],
+                [0, 1, 0],
+                [0, 1, 0]
+            ],
+            "material": {
+                "type": "dielectric",
+                "ior": 1.333,
+                "albedo": [0.68, 0.90, 1.0]
+            }
+        },
+        {
+            "type": "triangle",
+            "vertices": [
+                [-1.6, 3.6, 0.8],
+                [0.0, 3.6, -1.8],
+                [1.6, 3.6, 0.8]
+            ],
+            "material": {
+                "type": "emissive",
+                "emission": [7.0, 7.4, 8.0]
+            }
+        }
+    ]
+}

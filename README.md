@@ -1,6 +1,6 @@
 # Raytracer
 
-一个从零开始的 C++ 光线追踪渲染器，输出 PPM 图片文件。
+一个从零开始的 C++ 光线追踪渲染器，输出 PPM/PNG 图片文件。
 场景通过 JSON 文件配置，支持命令行参数覆盖。
 
 ## 快速开始
@@ -30,6 +30,23 @@ cmake --build build
 
 ```bash
 g++ -std=c++17 -O2 -Wall -Wextra -Iinclude -o raytracer src/main.cpp
+```
+
+### 测试
+
+```bash
+cmake -S . -B build
+cmake --build build
+ctest --test-dir build --output-on-failure
+```
+
+CMake 测试包含 C++ 回归测试和 deterministic golden image 回归。更新 golden 图片时先确认渲染变化符合预期，再运行：
+
+```bash
+./build/raytracer --scene tests/golden/scenes/golden_default.json --threads 1 --out /tmp/golden_default.png
+python3 tests/golden/compare_images.py --actual /tmp/golden_default.png --expected tests/golden/images/golden_default.png --update
+./build/raytracer --scene tests/golden/scenes/golden_mirror_glass_water.json --threads 1 --out /tmp/golden_mirror_glass_water.png
+python3 tests/golden/compare_images.py --actual /tmp/golden_mirror_glass_water.png --expected tests/golden/images/golden_mirror_glass_water.png --update
 ```
 
 ### 运行

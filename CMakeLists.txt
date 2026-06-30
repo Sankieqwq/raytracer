@@ -26,3 +26,16 @@ target_link_options(raytracer_regression_tests PRIVATE -fsanitize=address,undefi
 add_test(NAME raytracer_regression_tests COMMAND raytracer_regression_tests)
 set_tests_properties(raytracer_regression_tests PROPERTIES
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
+find_package(Python3 COMPONENTS Interpreter)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME golden_default
+        COMMAND sh -c "$<TARGET_FILE:raytracer> --scene tests/golden/scenes/golden_default.json --threads 1 --out /tmp/golden_default.png && ${Python3_EXECUTABLE} tests/golden/compare_images.py --actual /tmp/golden_default.png --expected tests/golden/images/golden_default.png")
+    set_tests_properties(golden_default PROPERTIES
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
+    add_test(NAME golden_mirror_glass_water
+        COMMAND sh -c "$<TARGET_FILE:raytracer> --scene tests/golden/scenes/golden_mirror_glass_water.json --threads 1 --out /tmp/golden_mirror_glass_water.png && ${Python3_EXECUTABLE} tests/golden/compare_images.py --actual /tmp/golden_mirror_glass_water.png --expected tests/golden/images/golden_mirror_glass_water.png")
+    set_tests_properties(golden_mirror_glass_water PROPERTIES
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+endif()
