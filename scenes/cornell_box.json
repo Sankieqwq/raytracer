@@ -1,0 +1,107 @@
+{
+    "image": {
+        "width": 600,
+        "height": 600,
+        "samples": 32,
+        "max_depth": 16,
+        "output": "cornell_box.ppm"
+    },
+    "camera": {
+        "lookfrom": [2.5, 2.5, -4.5],
+        "lookat": [2.5, 2.5, 2.5],
+        "vup": [0, 1, 0],
+        "vfov": 65,
+        "aperture": 0.0,
+        "focus_dist": 7.0
+    },
+    "lighting": {
+        "ambient": [0.0, 0.0, 0.0]
+    },
+    "lights": [],
+    "objects": [
+        {
+            "type": "triangle",
+            "vertices": [[0,0,0], [0,0,5], [0,5,5]],
+            "normals": [[1,0,0], [1,0,0], [1,0,0]],
+            "material": { "type": "lambertian", "albedo": [0.65, 0.05, 0.05] }
+        },
+        {
+            "type": "triangle",
+            "vertices": [[0,0,0], [0,5,5], [0,5,0]],
+            "normals": [[1,0,0], [1,0,0], [1,0,0]],
+            "material": { "type": "lambertian", "albedo": [0.65, 0.05, 0.05] }
+        },
+        {
+            "type": "triangle",
+            "vertices": [[5,0,0], [5,5,0], [5,5,5]],
+            "normals": [[-1,0,0], [-1,0,0], [-1,0,0]],
+            "material": { "type": "lambertian", "albedo": [0.12, 0.45, 0.15] }
+        },
+        {
+            "type": "triangle",
+            "vertices": [[5,0,0], [5,5,5], [5,0,5]],
+            "normals": [[-1,0,0], [-1,0,0], [-1,0,0]],
+            "material": { "type": "lambertian", "albedo": [0.12, 0.45, 0.15] }
+        },
+        {
+            "type": "triangle",
+            "vertices": [[0,0,5], [5,0,5], [5,5,5]],
+            "normals": [[0,0,-1], [0,0,-1], [0,0,-1]],
+            "material": { "type": "lambertian", "albedo": [0.73, 0.73, 0.73] }
+        },
+        {
+            "type": "triangle",
+            "vertices": [[0,0,5], [5,5,5], [0,5,5]],
+            "normals": [[0,0,-1], [0,0,-1], [0,0,-1]],
+            "material": { "type": "lambertian", "albedo": [0.73, 0.73, 0.73] }
+        },
+        {
+            "type": "triangle",
+            "vertices": [[0,5,0], [0,5,5], [5,5,5]],
+            "normals": [[0,-1,0], [0,-1,0], [0,-1,0]],
+            "material": { "type": "lambertian", "albedo": [0.73, 0.73, 0.73] }
+        },
+        {
+            "type": "triangle",
+            "vertices": [[0,5,0], [5,5,5], [5,5,0]],
+            "normals": [[0,-1,0], [0,-1,0], [0,-1,0]],
+            "material": { "type": "lambertian", "albedo": [0.73, 0.73, 0.73] }
+        },
+        {
+            "type": "triangle",
+            "vertices": [[0,0,0], [5,0,0], [5,0,5]],
+            "normals": [[0,1,0], [0,1,0], [0,1,0]],
+            "material": { "type": "lambertian", "albedo": [0.73, 0.73, 0.73] }
+        },
+        {
+            "type": "triangle",
+            "vertices": [[0,0,0], [5,0,5], [0,0,5]],
+            "normals": [[0,1,0], [0,1,0], [0,1,0]],
+            "material": { "type": "lambertian", "albedo": [0.73, 0.73, 0.73] }
+        },
+        {
+            "type": "triangle",
+            "vertices": [[2,4.99,2], [3,4.99,2], [3,4.99,3]],
+            "normals": [[0,-1,0], [0,-1,0], [0,-1,0]],
+            "material": { "type": "emissive", "emission": [15, 15, 15] }
+        },
+        {
+            "type": "triangle",
+            "vertices": [[2,4.99,2], [3,4.99,3], [2,4.99,3]],
+            "normals": [[0,-1,0], [0,-1,0], [0,-1,0]],
+            "material": { "type": "emissive", "emission": [15, 15, 15] }
+        },
+        {
+            "type": "sphere",
+            "center": [1.8, 1.0, 2.5],
+            "radius": 1.0,
+            "material": { "type": "lambertian", "albedo": [0.73, 0.73, 0.73] }
+        },
+        {
+            "type": "sphere",
+            "center": [3.6, 0.8, 3.2],
+            "radius": 0.8,
+            "material": { "type": "metal", "albedo": [0.8, 0.85, 0.9], "fuzz": 0.0 }
+        }
+    ]
+}

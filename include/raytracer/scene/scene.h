@@ -37,6 +37,11 @@ struct Light {
     double intensity = 1.0;
 };
 
+struct EmissiveObject {
+    Hittable* geometry;
+    Color emission;
+};
+
 struct Scene {
     int width = 800;
     int height = 400;
@@ -52,6 +57,7 @@ struct Scene {
     AABB mesh_bounds;
     Color ambient_light = Color(0.04, 0.04, 0.04);
     std::vector<Light> lights;
+    std::vector<EmissiveObject> emissive_objects;
 
     std::vector<std::unique_ptr<Material>> materials;
     std::vector<std::unique_ptr<Hittable>> objects;
@@ -249,12 +255,8 @@ inline Material* add_loaded_material(const ObjMeshData& mesh,
                                       const LoadedMaterialData& data,
                                       Scene& scene) {
     std::unique_ptr<Material> mat;
-    if (data.transmission > 0.5) {
+    if (data.transmission > 0.5 || data.alpha_blend) {
         mat = std::make_unique<Dielectric>(data.ior, make_loaded_texture(mesh, data));
-    } else if (data.alpha_blend) {
-        mat = std::make_unique<Dielectric>(data.ior, make_loaded_texture(mesh, data));
-    } else if (data.alpha < 0.35) {
-        mat = std::make_unique<Dielectric>(1.5);
     } else if (data.metallic > 0.5) {
         double fuzz = std::clamp(data.roughness, 0.0, 1.0);
         mat = std::make_unique<Metal>(make_loaded_texture(mesh, data), fuzz);
@@ -299,6 +301,71 @@ inline std::vector<Light> default_lights() {
     fill.intensity = 5.0;
 
     return {sun, fill};
+}
+
+struct LightSample {
+    Vec3 direction;
+    Color radiance;
+    double pdf = 0;
+    double distance = infinity;
+    bool is_delta = true;
+};
+
+inline LightSample sample_any_light(const Scene& scene, const Point3& p) {
+    size_t n_delta = scene.lights.size();
+    size_t n_area = scene.emissive_objects.size();
+    size_t total = n_delta + n_area;
+    if (total == 0) return LightSample{};
+
+    double choice = random_double() * total;
+    LightSample s;
+
+    if (choice < n_delta) {
+        const Light& light = scene.lights[static_cast<size_t>(choice)];
+        s.is_delta = true;
+        s.pdf = 1.0 / total;
+        if (light.type == LightType::Point) {
+            Vec3 to_light = light.position - p;
+            double dist2 = to_light.length_squared();
+            if (dist2 < 1e-8) return LightSample{};
+            double dist = std::sqrt(dist2);
+            s.direction = to_light / dist;
+            s.distance = dist;
+            s.radiance = light.color * light.intensity / dist2;
+        } else {
+            s.direction = (-light.direction).normalized();
+            s.distance = infinity;
+            s.radiance = light.color * light.intensity;
+        }
+    } else {
+        size_t idx = static_cast<size_t>(choice - n_delta);
+        if (idx >= n_area) return LightSample{};
+        const EmissiveObject& eo = scene.emissive_objects[idx];
+        double r1 = random_double(), r2 = random_double();
+        Vec3 light_normal;
+        Point3 light_point = eo.geometry->sample_point(r1, r2, &light_normal);
+
+        Vec3 to_light = light_point - p;
+        double dist2 = to_light.length_squared();
+        if (dist2 < 1e-8) return LightSample{};
+        double dist = std::sqrt(dist2);
+        s.direction = to_light / dist;
+        s.distance = dist;
+
+        double cos_light = dot(light_normal, -s.direction);
+        if (cos_light <= 1e-8) return LightSample{};
+
+        double geom_area = eo.geometry->area();
+        if (geom_area <= 0) return LightSample{};
+
+        double total_area = 0;
+        for (const EmissiveObject& e : scene.emissive_objects) total_area += e.geometry->area();
+
+        s.radiance = eo.emission;
+        s.is_delta = false;
+        s.pdf = (dist2 / cos_light) / total_area * (double(n_area) / total);
+    }
+    return s;
 }
 
 inline std::string lower_ext(const std::string& path) {
@@ -686,6 +753,32 @@ inline void load_scene(const std::string& path,
         scene.world = std::make_unique<HittableList>(scene.primitives);
     } else {
         scene.world = std::make_unique<LinearBVH>(scene.primitives.objects);
+    }
+
+    for (Hittable* obj : scene.primitives.objects) {
+        Sphere* sph = dynamic_cast<Sphere*>(obj);
+        if (sph && sph->material && sph->material->is_emissive()) {
+            Emissive* em = static_cast<Emissive*>(sph->material);
+            scene.emissive_objects.push_back({sph, em->emission});
+            continue;
+        }
+        Triangle* tri = dynamic_cast<Triangle*>(obj);
+        if (tri && tri->material && tri->material->is_emissive()) {
+            Emissive* em = static_cast<Emissive*>(tri->material);
+            scene.emissive_objects.push_back({tri, em->emission});
+            continue;
+        }
+        TriangleMesh* mesh = dynamic_cast<TriangleMesh*>(obj);
+        if (mesh) {
+            bool any_emissive = false;
+            for (Material* m : mesh->material_per_tri) {
+                if (m && m->is_emissive()) { any_emissive = true; break; }
+            }
+            if (any_emissive) {
+                scene.emissive_objects.push_back({mesh,
+                    static_cast<Emissive*>(mesh->material_per_tri[0])->emission});
+            }
+        }
     }
 }
 
