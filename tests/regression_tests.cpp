@@ -158,6 +158,15 @@ void test_obj_loader_reads_mtl_diffuse_and_texture() {
     }
 }
 
+void test_obj_loader_ignores_missing_mtl_file() {
+    try {
+        ObjMeshData mesh = load_model_mesh("models/obj/mark.obj");
+        check(!mesh.triangles.empty(), "OBJ with missing MTL should still load geometry");
+    } catch (const std::exception& e) {
+        check(false, std::string("OBJ with missing MTL should not fail: ") + e.what());
+    }
+}
+
 void test_triangle_mesh_exposes_internal_acceleration() {
     TriangleMesh mesh;
     for (int i = 0; i < 8; ++i) {
@@ -297,6 +306,7 @@ int main() {
     test_degenerate_mesh_uv_tangent_is_finite();
     test_obj_loader_handles_mixed_missing_attributes();
     test_obj_loader_reads_mtl_diffuse_and_texture();
+    test_obj_loader_ignores_missing_mtl_file();
     test_triangle_mesh_exposes_internal_acceleration();
     test_pbr_exposes_brdf_and_pdf_for_direct_lighting();
     test_display_color_exposure_and_tone_mapping();

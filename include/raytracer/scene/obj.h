@@ -141,7 +141,7 @@ inline void load_obj_mtl_file(const std::filesystem::path& obj_dir,
                               std::unordered_map<std::string, int>& material_indices) {
     std::filesystem::path mtl_path = resolve_obj_relative_path(obj_dir, mtl_name);
     std::ifstream in(mtl_path);
-    if (!in) throw std::runtime_error("Cannot open MTL file: " + mtl_path.string());
+    if (!in) return;
 
     std::filesystem::path mtl_dir = mtl_path.parent_path();
     LoadedMaterialData* current = nullptr;
