@@ -167,6 +167,7 @@ open out.png
 | `samples`　 | int　　| 16　　　　　| 每像素采样数，越大越细腻、越慢 |
 | `max_depth` | int　　| 32　　　　　| 光线递归深度上限　　　　　　　 |
 | `output`　　| string | `"out.ppm"` | 输出文件路径　　　　　　　　　 |
+| `exposure`　| float　| 1.0　　　　 | 曝光系数，配合 filmic 色调映射使用 |
 
 **camera**（均可选，有默认值）
 
@@ -226,7 +227,7 @@ open out.png
 |------|----------|------|
 | `"lambertian"` | `albedo`: [r,g,b], `texture`: string/object | 漫反射（哑光） |
 | `"metal"` | `albedo`: [r,g,b], `texture`: string/object, `fuzz`: 0~1 | 金属反射，fuzz=0 镜面，越大越粗糙 |
-| `"dielectric"` | `ior`: float, `albedo`: [r,g,b]（可选） | 玻璃/水等透明介质，ior=1.5 玻璃，1.33 水；albedo 默认白色，设为颜色可渲染有色玻璃 |
+| `"dielectric"` | `ior`: float, `albedo`: [r,g,b]（可选）, `attenuation_color`: [r,g,b]（可选）, `attenuation_distance`: float（可选） | 玻璃/水等透明介质，ior=1.5 玻璃，1.33 水；albedo 默认白色；`attenuation_color`/`attenuation_distance` 控制体积吸收（Beer-Lambert），厚处色深薄处色淡 |
 | `"pbr"` | `albedo`/`metallic`/`roughness` + 各 `_map` + `normal_map` | Cook-Torrance 金属-粗糙度材质 |
 | `"emissive"` | `emission`: [r,g,b] | 自发光材质，可作为面光源 |
 
@@ -239,6 +240,9 @@ open out.png
 | `scenes/default.json` | 漫反射球 + 地面（基础验证） |
 | `scenes/three_balls.json` | 漫反射 + 玻璃 + 金属 三球场景 |
 | `scenes/glass_bottle.json` | GLB 玻璃瓶（自动识别 BLEND 为透明介质） |
+| `scenes/glass_volume.json` | 玻璃瓶 + 体积吸收（Beer-Lambert 淡绿色玻璃） |
+| `scenes/glass_emissive.json` | 玻璃瓶 + Emissive 面光源（MIS 验证） |
+| `scenes/cornell_box.json` | Cornell Box（经典 MIS 验证：面光源 + 漫反射墙 + color bleeding） |
 | `scenes/glass.json` | 玻璃材质验证 |
 | `scenes/obj.json` | 通用 OBJ/GLB 模型模板，配合 `--model` 使用 |
 | `scenes/mark.json` | 加载 `models/obj/mark.obj` 的网格场景 |
@@ -262,7 +266,7 @@ open out.png
 - 支持 GLB 基础材质：`baseColorFactor`、`metallicFactor`、`roughnessFactor`、透明度 alpha
 - 支持 GLB `baseColorTexture`，可读取内嵌 bufferView 图片或外部图片路径
 - 支持 GLB `alphaMode: "BLEND"` 自动识别为透明介质（Dielectric），常用于导出工具的玻璃近似
-- 支持 GLB KHR 扩展：`KHR_materials_transmission`（透射）、`KHR_materials_ior`（折射率）
+- 支持 GLB KHR 扩展：`KHR_materials_transmission`（透射）、`KHR_materials_ior`（折射率）、`KHR_materials_volume`（体积吸收：attenuationColor/attenuationDistance）
 - GLB 材质路由优先级：KHR transmission > alphaMode BLEND > alpha < 0.35 > metallic > lambertian
 - GLB 材质会按 primitive 自动绑定到三角形；`material` 字段只作为 fallback，除非设置 `override_material: true`
 - 支持根据 OBJ/GLB 包围盒自动居中、缩放模型
@@ -337,7 +341,7 @@ open out.png
 | `lambertian` | `albedo` | 漫反射（保留） |
 | `metal` | `albedo`, `fuzz` | 金属反射（保留） |
 | `dielectric` | `ior`, `albedo`（可选） | 玻璃/水（保留） |
-| `pbr` | `albedo`/`metallic`/`roughness` + 各 `_map` + `normal_map` | Cook-Torrance BRDF |
+| `pbr` | `albedo`/`metallic`/`roughness` + 各 `_map` + `normal_map` | Cook-Torrance BRDF + NEE/MIS |
 | `emissive` | `emission` | 自发光（面光源） |
 
 ### PBR 示例
@@ -429,7 +433,9 @@ raytracer/
 - ✅ 阶段 9：OBJ 模型加载与变换（tinyobjloader + 4x4 矩阵 + 平滑法线）
 - ✅ 阶段 10：BVH 线性化加速（扁平节点 + 栈遍历，GPU 友好）
 - ✅ 阶段 11：PBR 材质 + 纹理 + 自发光（Cook-Torrance + GGX 重要性采样）
-- ✅ GLB 玻璃材质支持：`alphaMode: BLEND` 自动识别 + `KHR_materials_transmission` / `KHR_materials_ior` 扩展 + Dielectric albedo/纹理
+- ✅ GLB 玻璃材质支持：`alphaMode: BLEND` 自动识别 + `KHR_materials_transmission` / `KHR_materials_ior` / `KHR_materials_volume` 扩展 + Dielectric albedo/纹理/体积吸收
+- ✅ Filmic 色调映射（Uncharted 2 曲线）+ 可调 exposure
+- ✅ PBR 走 NEE（Cook-Torrance 的 f/pdf 实现 + MIS 权重）
 - ⬜ 后续：CUDA 移植
 
 ## 渲染原理速览
@@ -442,6 +448,7 @@ raytracer/
 6. 未命中 → 返回天空背景色（蓝白渐变）
 7. 递归到 `max_depth` 或射线不散射则停止
 8. 每像素多次采样平均，消除锯齿
+9. 输出前做 filmic 色调映射（Uncharted 2 曲线）+ gamma 2.2 校正，exposure 可调
 
 ## 开发环境要求
 

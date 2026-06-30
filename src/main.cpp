@@ -292,7 +292,7 @@ int main(int argc, char* argv[]) {
     }
     std::cerr << "\rProgress: 100%\n";
 
-    write_ppm(scene.output, scene.width, scene.height, pixels, scene.samples);
+    write_ppm(scene.output, scene.width, scene.height, pixels, scene.samples, scene.exposure);
     std::cout << "Wrote " << scene.output << "\n";
     return 0;
 }

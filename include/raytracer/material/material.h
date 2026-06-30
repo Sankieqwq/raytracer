@@ -105,6 +105,8 @@ public:
     double ior;
     Color albedo;
     std::shared_ptr<Texture> albedo_texture;
+    Color attenuation_color = Color(1.0, 1.0, 1.0);
+    double attenuation_distance = 0.0;
 
     explicit Dielectric(double index_of_refraction, Color albedo = Color(1.0, 1.0, 1.0))
         : ior(index_of_refraction), albedo(albedo) {}
@@ -123,7 +125,16 @@ public:
                  Color& attenuation, Ray& scattered,
                  Color& emission) const override {
         emission = Color(0, 0, 0);
-        attenuation = base_color(rec);
+        Color base = base_color(rec);
+        if (attenuation_distance > 0 && !rec.front_face) {
+            double dist = rec.t;
+            double r = std::pow(attenuation_color.x, dist / attenuation_distance);
+            double g = std::pow(attenuation_color.y, dist / attenuation_distance);
+            double b = std::pow(attenuation_color.z, dist / attenuation_distance);
+            attenuation = base * Color(r, g, b);
+        } else {
+            attenuation = base;
+        }
         double ratio = rec.front_face ? (1.0 / ior) : ior;
         Vec3 unit_dir = r_in.direction.normalized();
         double cos_theta = std::fmin(dot(-unit_dir, rec.normal), 1.0);
@@ -237,7 +248,65 @@ public:
         return true;
     }
 
-    bool is_specular() const override { return true; }
+    bool is_specular() const override { return false; }
+
+    Color f(const Ray& r_in, const Ray& scattered, const HitRecord& rec) const override {
+        Color base = base_color(rec);
+        double met = std::clamp(metallic->value(rec.u, rec.v, rec.p).x, 0.0, 1.0);
+        double rough = std::clamp(roughness->value(rec.u, rec.v, rec.p).x, 0.001, 1.0);
+        double alpha = rough * rough;
+        double a2 = alpha * alpha;
+
+        Vec3 n = rec.normal;
+        Vec3 v = (-r_in.direction).normalized();
+        Vec3 l = scattered.direction.normalized();
+        double n_dot_v = std::max(0.0, dot(n, v));
+        double n_dot_l = std::max(0.0, dot(n, l));
+        if (n_dot_v <= 0 || n_dot_l <= 0) return Color(0, 0, 0);
+
+        Vec3 h = (v + l).normalized();
+        double n_dot_h = std::max(0.0, dot(n, h));
+        double v_dot_h = std::max(0.0, dot(v, h));
+        if (n_dot_h <= 0 || v_dot_h <= 0) return Color(0, 0, 0);
+
+        double denom_d = n_dot_h * n_dot_h * (a2 - 1) + 1;
+        double D = a2 / (pi * denom_d * denom_d);
+
+        auto g1 = [&](double ndx) {
+            double sq = std::sqrt(a2 + (1 - a2) * ndx * ndx);
+            return 2 * ndx / (ndx + sq);
+        };
+        double G = g1(n_dot_l) * g1(n_dot_v);
+
+        Color F0 = (1 - met) * Color(0.04, 0.04, 0.04) + met * base;
+        Color F = F0 + (Color(1, 1, 1) - F0) * std::pow(1 - v_dot_h, 5);
+
+        Color kD = (Color(1, 1, 1) - F) * (1 - met);
+        Color diffuse = kD * base / pi;
+        Color specular = F * (D * G) / (4 * n_dot_l * n_dot_v);
+        return diffuse + specular;
+    }
+
+    double pdf(const Ray& r_in, const Ray& scattered, const HitRecord& rec) const override {
+        double rough = std::clamp(roughness->value(rec.u, rec.v, rec.p).x, 0.001, 1.0);
+        double alpha = rough * rough;
+        double a2 = alpha * alpha;
+
+        Vec3 n = rec.normal;
+        Vec3 v = (-r_in.direction).normalized();
+        Vec3 l = scattered.direction.normalized();
+        double n_dot_l = std::max(0.0, dot(n, l));
+        if (n_dot_l <= 0) return 0;
+
+        Vec3 h = (v + l).normalized();
+        double n_dot_h = std::max(0.0, dot(n, h));
+        double v_dot_h = std::max(0.0, dot(v, h));
+        if (n_dot_h <= 0 || v_dot_h <= 0) return 0;
+
+        double denom_d = n_dot_h * n_dot_h * (a2 - 1) + 1;
+        double D = a2 / (pi * denom_d * denom_d);
+        return (D * n_dot_h) / (4 * v_dot_h);
+    }
 };
 
 // Emissive material (area light)

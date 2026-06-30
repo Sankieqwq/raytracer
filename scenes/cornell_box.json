@@ -4,7 +4,8 @@
         "height": 600,
         "samples": 32,
         "max_depth": 16,
-        "output": "cornell_box.ppm"
+        "output": "cornell_box.ppm",
+        "exposure": 2.0
     },
     "camera": {
         "lookfrom": [2.5, 2.5, -4.5],

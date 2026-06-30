@@ -308,6 +308,15 @@ inline LoadedMaterialData glb_material_data(const JsonValue& material) {
             const JsonValue& ior_ext = exts.at("KHR_materials_ior");
             data.ior = json_double(ior_ext, "ior", 1.5);
         }
+        if (exts.has("KHR_materials_volume")) {
+            const JsonValue& vol = exts.at("KHR_materials_volume");
+            data.attenuation_distance = json_double(vol, "attenuationDistance", 0.0);
+            if (vol.has("attenuationColor")) {
+                const auto& ac = vol.at("attenuationColor").arrVal;
+                if (ac.size() >= 3)
+                    data.attenuation_color = Color(ac[0].numVal, ac[1].numVal, ac[2].numVal);
+            }
+        }
     }
 
     return data;

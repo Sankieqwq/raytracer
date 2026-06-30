@@ -48,6 +48,7 @@ struct Scene {
     int samples = 16;
     int max_depth = 32;
     std::string output = "out.ppm";
+    double exposure = 1.0;
 
     std::unique_ptr<Camera> camera;
     HittableList primitives;
@@ -186,7 +187,10 @@ inline Material* parse_material(const JsonValue& m,
         mat = std::make_unique<Metal>(material_texture_or_color(m, base_dir, albedo), fuzz);
     } else if (type == "dielectric") {
         Color alb = m.has("albedo") ? to_vec3(m.at("albedo")) : Color(1.0, 1.0, 1.0);
-        mat = std::make_unique<Dielectric>(m.at("ior").numVal, alb);
+        auto die = std::make_unique<Dielectric>(m.at("ior").numVal, alb);
+        if (m.has("attenuation_color")) die->attenuation_color = to_vec3(m.at("attenuation_color"));
+        if (m.has("attenuation_distance")) die->attenuation_distance = m.at("attenuation_distance").numVal;
+        mat = std::move(die);
     } else if (type == "pbr") {
         auto albedo_tex = parse_texture_color(m, "albedo", Color(0.8, 0.8, 0.8), base_dir);
         auto metallic_tex = parse_texture_scalar(m, "metallic", 0.0, base_dir);
@@ -256,7 +260,10 @@ inline Material* add_loaded_material(const ObjMeshData& mesh,
                                       Scene& scene) {
     std::unique_ptr<Material> mat;
     if (data.transmission > 0.5 || data.alpha_blend) {
-        mat = std::make_unique<Dielectric>(data.ior, make_loaded_texture(mesh, data));
+        auto die = std::make_unique<Dielectric>(data.ior, make_loaded_texture(mesh, data));
+        die->attenuation_color = data.attenuation_color;
+        die->attenuation_distance = data.attenuation_distance;
+        mat = std::move(die);
     } else if (data.metallic > 0.5) {
         double fuzz = std::clamp(data.roughness, 0.0, 1.0);
         mat = std::make_unique<Metal>(make_loaded_texture(mesh, data), fuzz);
@@ -628,6 +635,7 @@ inline void load_scene(const std::string& path,
         if (img.has("samples"))   scene.samples   = static_cast<int>(img.at("samples").numVal);
         if (img.has("max_depth")) scene.max_depth = static_cast<int>(img.at("max_depth").numVal);
         if (img.has("output"))    scene.output    = img.at("output").strVal;
+        if (img.has("exposure"))  scene.exposure  = img.at("exposure").numVal;
     }
 
     double aspect = double(scene.width) / scene.height;
