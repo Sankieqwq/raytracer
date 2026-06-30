@@ -209,6 +209,15 @@ void test_output_format_detection() {
           "unknown extension should preserve old PPM behavior");
 }
 
+void test_random_seed_repeats_sequence() {
+    set_random_seed(1234);
+    double a = random_double();
+    double b = random_double();
+    set_random_seed(1234);
+    check(near(a, random_double()), "first random sample should repeat after seed reset");
+    check(near(b, random_double()), "second random sample should repeat after seed reset");
+}
+
 void test_collect_emissive_objects_uses_only_emissive_mesh_triangles() {
     Scene scene;
 
@@ -267,6 +276,7 @@ int main() {
     test_pbr_exposes_brdf_and_pdf_for_direct_lighting();
     test_display_color_exposure_and_tone_mapping();
     test_output_format_detection();
+    test_random_seed_repeats_sequence();
     test_collect_emissive_objects_uses_only_emissive_mesh_triangles();
     test_mirror_glass_water_acceptance_scene_loads();
 

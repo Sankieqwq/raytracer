@@ -182,6 +182,7 @@ void print_usage(const char* prog) {
               << "  --threads <n>      render worker threads (default: hardware concurrency)\n"
               << "  --exposure <n>     display exposure multiplier (default: scene/default 1.0)\n"
               << "  --tone-map <mode>  tone mapping: aces, reinhard, none\n"
+              << "  --seed <n>         deterministic random seed (default: random_device)\n"
               << "  --direct-only      disable recursive random bounces, use direct light + shadows only\n"
               << "  --preview          fast preview mode: direct-only and samples=1 unless overridden\n";
 }
@@ -194,6 +195,7 @@ int main(int argc, char* argv[]) {
     int samples_override = -1;
     double exposure_override = -1.0;
     std::string tone_map_override;
+    long long seed_override = -1;
     RenderOptions render_options;
 
     for (int i = 1; i < argc; i++) {
@@ -217,6 +219,8 @@ int main(int argc, char* argv[]) {
             exposure_override = std::stod(argv[++i]);
         } else if (arg == "--tone-map" && i + 1 < argc) {
             tone_map_override = argv[++i];
+        } else if (arg == "--seed" && i + 1 < argc) {
+            seed_override = std::stoll(argv[++i]);
         } else if (arg == "--direct-only") {
             render_options.direct_only = true;
         } else if (arg == "--preview") {
@@ -256,6 +260,11 @@ int main(int argc, char* argv[]) {
     if (!out_override.empty()) scene.output = out_override;
     if (exposure_override > 0) scene.output_options.exposure = exposure_override;
     if (!tone_map_override.empty()) scene.output_options.tone_map = parse_tone_map_mode(tone_map_override);
+    if (seed_override >= 0) {
+        set_random_seed(static_cast<unsigned int>(seed_override));
+    } else if (scene.has_seed) {
+        set_random_seed(scene.seed);
+    }
     if (samples_override > 0)  {
         scene.samples = samples_override;
     } else if (render_options.preview) {

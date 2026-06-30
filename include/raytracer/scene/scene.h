@@ -50,6 +50,8 @@ struct Scene {
     int max_depth = 32;
     std::string output = "out.ppm";
     ImageOutputOptions output_options;
+    unsigned int seed = 0;
+    bool has_seed = false;
 
     std::unique_ptr<Camera> camera;
     HittableList primitives;
@@ -786,6 +788,9 @@ inline void load_scene(const std::string& path,
     scene.lights.clear();
     scene.emissive_objects.clear();
     scene.emissive_samplers.clear();
+    scene.output_options = ImageOutputOptions();
+    scene.seed = 0;
+    scene.has_seed = false;
 
     JsonValue root = parse_json_file(path);
     std::filesystem::path scene_dir = std::filesystem::absolute(path).parent_path();
@@ -799,6 +804,10 @@ inline void load_scene(const std::string& path,
         if (img.has("output"))    scene.output    = img.at("output").strVal;
         if (img.has("exposure"))  scene.output_options.exposure = img.at("exposure").numVal;
         if (img.has("tone_map"))  scene.output_options.tone_map = parse_tone_map_mode(img.at("tone_map").strVal);
+        if (img.has("seed")) {
+            scene.seed = static_cast<unsigned int>(img.at("seed").numVal);
+            scene.has_seed = true;
+        }
     }
 
     double aspect = double(scene.width) / scene.height;

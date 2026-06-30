@@ -73,6 +73,7 @@ g++ -std=c++17 -O2 -Wall -Wextra -Iinclude -o raytracer src/main.cpp
 | `--threads <n>` | 渲染线程数，用于高采样加速 | CPU 硬件线程数 |
 | `--exposure <n>` | 显示曝光倍率（覆盖场景配置） | 场景中的 `exposure` 或 1.0 |
 | `--tone-map <mode>` | 色调映射：`aces`、`reinhard`、`none` | 场景中的 `tone_map` 或 `aces` |
+| `--seed <n>` | 固定随机种子，便于复现渲染结果 | 场景中的 `seed` 或随机种子 |
 | `--direct-only` | 只计算直接光照、阴影和环境光，关闭递归随机反弹以减少噪声 | 关闭 |
 | `--preview` | 快速预览模式：启用 `--direct-only`，且未指定 `--samples` 时使用 1 sample | 关闭 |
 | `--help` | 显示帮助 | — |
@@ -112,7 +113,8 @@ open out.png
         "max_depth": 32,
         "output": "out.png",
         "tone_map": "aces",
-        "exposure": 1.0
+        "exposure": 1.0,
+        "seed": 12345
     },
     "camera": {
         "lookfrom": [0, 0, 0],
@@ -173,6 +175,7 @@ open out.png
 | `output`　　| string | `"out.ppm"` | 输出文件路径，`.png` 直接写 PNG，其他扩展名写 PPM |
 | `tone_map`  | string | `"aces"`     | 显示色调映射：`aces`、`reinhard`、`none` |
 | `exposure`  | float  | 1.0          | 显示曝光倍率 |
+| `seed`      | int    | 随机种子     | 固定随机序列，常用于回归测试 |
 
 **camera**（均可选，有默认值）
 
