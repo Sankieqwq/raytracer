@@ -6,6 +6,7 @@ build/
 *.ppm
 *.png
 !tests/golden/images/*.png
+!textures/mtl_test.ppm
 
 # executable
 /raytracer

@@ -146,6 +146,18 @@ void test_obj_loader_handles_mixed_missing_attributes() {
     check(mesh.uvs.empty() || mesh.uvs.size() == mesh.vertices.size(), "OBJ loader UV data must be empty or complete");
 }
 
+void test_obj_loader_reads_mtl_diffuse_and_texture() {
+    ObjMeshData mesh = load_model_mesh("models/obj/mtl_test.obj");
+    check(mesh.materials.size() == 1, "OBJ MTL fixture should load one material");
+    if (!mesh.materials.empty()) {
+        check(near_vec(mesh.materials[0].albedo, Color(0.25, 0.5, 0.75)),
+              "Kd should map to loaded material albedo");
+        check(mesh.materials[0].base_color_texture == 0,
+              "map_Kd should map to base color texture index");
+        check(!mesh.textures.empty(), "map_Kd should create a loaded texture entry");
+    }
+}
+
 void test_triangle_mesh_exposes_internal_acceleration() {
     TriangleMesh mesh;
     for (int i = 0; i < 8; ++i) {
@@ -274,6 +286,7 @@ int main() {
     test_degenerate_triangle_uv_tangent_is_finite();
     test_degenerate_mesh_uv_tangent_is_finite();
     test_obj_loader_handles_mixed_missing_attributes();
+    test_obj_loader_reads_mtl_diffuse_and_texture();
     test_triangle_mesh_exposes_internal_acceleration();
     test_pbr_exposes_brdf_and_pdf_for_direct_lighting();
     test_display_color_exposure_and_tone_mapping();
