@@ -8,6 +8,9 @@ build/
 
 # executable
 /raytracer
+/raytracer_blender_bridge
+__pycache__/
+*.pyc
 
 # IDE
 .vscode/

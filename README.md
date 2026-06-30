@@ -61,7 +61,13 @@ g++ -std=c++17 -O2 -Wall -Wextra -Iinclude -o raytracer src/main.cpp
 ./run.sh --direct-only --model models/glb/toyota_mark_ii_jzx100.glb --samples 8 --out car_direct.ppm
 ```
 
-命令行参数：
+### Blender 5.1 渲染器入口
+
+项目额外提供了一个 Blender RenderEngine 插件，可以直接渲染 Blender 当前场景，不需要手写 `scenes/*.json`，也不会影响原有 CLI 渲染路径。
+
+Blender 插件的安装、构建、参数说明和当前限制见 [integrations/blender/README.md](integrations/blender/README.md)。
+
+### 命令行参数
 
 | 参数 | 含义 | 默认值 |
 |------|------|--------|
