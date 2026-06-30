@@ -150,6 +150,38 @@ public:
         return true;
     }
 
+    Point3 sample_point(double r1, double r2, Vec3* normal_out = nullptr) const override {
+        ensure_area_cdf();
+        if (tri_area_cdf_.empty()) return Point3();
+
+        double target = r1 * tri_area_total_;
+        auto it = std::lower_bound(tri_area_cdf_.begin(), tri_area_cdf_.end(), target);
+        int tri_idx = static_cast<int>(std::distance(tri_area_cdf_.begin(), it));
+        int tri_count = static_cast<int>(indices.size() / 3);
+        if (tri_idx >= tri_count) tri_idx = tri_count - 1;
+
+        int i0 = indices[tri_idx*3 + 0];
+        int i1 = indices[tri_idx*3 + 1];
+        int i2 = indices[tri_idx*3 + 2];
+
+        double sq = std::sqrt(r2);
+        double b1 = 1.0 - sq;
+        double b2 = sq * (1.0 - r1);
+        double b0 = sq * r1;
+
+        if (normal_out) {
+            Vec3 n = cross(vertices[i1] - vertices[i0], vertices[i2] - vertices[i0]);
+            double len = n.length();
+            *normal_out = len > 1e-12 ? n / len : Vec3(0, 1, 0);
+        }
+        return b0 * vertices[i0] + b1 * vertices[i1] + b2 * vertices[i2];
+    }
+
+    double area() const override {
+        ensure_area_cdf();
+        return tri_area_total_;
+    }
+
     void compute_bbox() const {
         if (vertices.empty()) {
             bbox_ = AABB();
@@ -185,6 +217,10 @@ private:
     mutable std::vector<TriangleMeshBVHNode> bvh_nodes_;
     mutable std::vector<int> bvh_tri_indices_;
     mutable bool bvh_built_ = false;
+
+    mutable std::vector<double> tri_area_cdf_;
+    mutable double tri_area_total_ = 0;
+    mutable bool area_cdf_built_ = false;
 
     bool valid_vertex_index(int idx) const {
         return idx >= 0 && static_cast<size_t>(idx) < vertices.size();
@@ -240,6 +276,29 @@ private:
             build_bvh_range(0, static_cast<int>(bvh_tri_indices_.size()));
         }
         bvh_built_ = true;
+    }
+
+    double triangle_area(int tri_idx) const {
+        int i0 = indices[tri_idx*3 + 0];
+        int i1 = indices[tri_idx*3 + 1];
+        int i2 = indices[tri_idx*3 + 2];
+        return 0.5 * cross(vertices[i1] - vertices[i0],
+                           vertices[i2] - vertices[i0]).length();
+    }
+
+    void ensure_area_cdf() const {
+        if (area_cdf_built_) return;
+        tri_area_cdf_.clear();
+        tri_area_total_ = 0;
+        int tri_count = static_cast<int>(indices.size() / 3);
+        tri_area_cdf_.reserve(tri_count);
+        for (int i = 0; i < tri_count; i++) {
+            double a = triangle_area(i);
+            if (a < 1e-20) a = 1e-20;
+            tri_area_total_ += a;
+            tri_area_cdf_.push_back(tri_area_total_);
+        }
+        area_cdf_built_ = true;
     }
 
     int build_bvh_range(int start, int end) const {

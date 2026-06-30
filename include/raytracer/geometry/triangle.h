@@ -130,6 +130,23 @@ public:
         output_box = AABB(small, big);
         return true;
     }
+
+    Point3 sample_point(double r1, double r2, Vec3* normal_out = nullptr) const override {
+        double sq = std::sqrt(r1);
+        double b1 = 1.0 - sq;
+        double b2 = sq * (1.0 - r2);
+        double b0 = sq * r2;
+        if (normal_out) {
+            Vec3 n = cross(v1 - v0, v2 - v0);
+            double len = n.length();
+            *normal_out = len > 1e-12 ? n / len : Vec3(0, 1, 0);
+        }
+        return b0 * v0 + b1 * v1 + b2 * v2;
+    }
+
+    double area() const override {
+        return 0.5 * cross(v1 - v0, v2 - v0).length();
+    }
 };
 
 #endif

@@ -49,6 +49,11 @@ public:
     virtual bool hit(const Ray& r, double t_min, double t_max,
                      HitRecord& rec) const = 0;
     virtual bool bounding_box(AABB& output_box) const = 0;
+    virtual Point3 sample_point(double r1, double r2, Vec3* normal_out = nullptr) const {
+        (void)r1; (void)r2; (void)normal_out;
+        return Point3();
+    }
+    virtual double area() const { return 0; }
 };
 
 #endif

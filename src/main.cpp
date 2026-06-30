@@ -29,7 +29,7 @@ bool is_shadowed(const Hittable& world, const Ray& shadow_ray, double max_t) {
     return world.hit(shadow_ray, 0.001, max_t, shadow_rec);
 }
 
-Color direct_lighting(const HitRecord& rec, const Scene& scene) {
+Color direct_delta_lights(const HitRecord& rec, const Scene& scene) {
     Color base = rec.material ? rec.material->base_color(rec) : Color(0.8, 0.8, 0.8);
     Color result = base * scene.ambient_light;
 
@@ -62,28 +62,95 @@ Color direct_lighting(const HitRecord& rec, const Scene& scene) {
     return result;
 }
 
-Color ray_color(const Ray& r, const Scene& scene, int depth, const RenderOptions& options) {
+Color ray_color(const Ray& r, const Scene& scene, int depth,
+                const RenderOptions& options,
+                double prev_pdf, bool prev_brdf) {
     if (depth <= 0) return Color(0, 0, 0);
 
     HitRecord rec;
-    if (scene.world->hit(r, 0.001, infinity, rec)) {
-        Color direct = (rec.material && rec.material->is_transparent())
-            ? Color(0, 0, 0)
-            : direct_lighting(rec, scene);
-        Ray scattered;
-        Color attenuation, emission;
-        bool did_scatter = rec.material && rec.material->scatter(r, rec, attenuation, scattered, emission);
-        if (options.direct_only) return emission + direct;
-        if (did_scatter) {
-            double indirect_w = (rec.material && rec.material->is_transparent()) ? 1.0 : 0.35;
-            return emission + direct + indirect_w * attenuation * ray_color(scattered, scene, depth - 1, options);
-        }
-        return emission + direct;
+    if (!scene.world->hit(r, 0.001, infinity, rec)) {
+        Vec3 unit_dir = r.direction.normalized();
+        double t = 0.5 * (unit_dir.y + 1.0);
+        return (1 - t) * Color(1.0, 1.0, 1.0) + t * Color(0.5, 0.7, 1.0);
     }
 
-    Vec3 unit_dir = r.direction.normalized();
-    double t = 0.5 * (unit_dir.y + 1.0);
-    return (1 - t) * Color(1.0, 1.0, 1.0) + t * Color(0.5, 0.7, 1.0);
+    if (rec.material && rec.material->is_emissive()) {
+        Emissive* em = static_cast<Emissive*>(rec.material);
+        if (prev_brdf && prev_pdf > 0 && !scene.emissive_objects.empty()) {
+            double total_area = 0;
+            for (const EmissiveObject& eo : scene.emissive_objects) total_area += eo.geometry->area();
+            double pdf_light = 0;
+            if (total_area > 0) {
+                double dist2 = (rec.p - r.origin).length_squared();
+                double cos_light = dot(rec.normal, -r.direction.normalized());
+                if (cos_light > 0) pdf_light = dist2 / (cos_light * total_area);
+            }
+            double w_brdf = prev_pdf / (prev_pdf + pdf_light);
+            return em->emission * w_brdf;
+        }
+        return em->emission;
+    }
+
+    Ray scattered;
+    Color attenuation, emission;
+    bool did_scatter = rec.material && rec.material->scatter(r, rec, attenuation, scattered, emission);
+
+    if (rec.material && rec.material->is_specular()) {
+        if (options.direct_only) return emission;
+        if (!did_scatter) return emission;
+        double brdf_pdf = rec.material->pdf(r, scattered, rec);
+        if (brdf_pdf <= 0) brdf_pdf = 1;
+        return emission + attenuation * ray_color(scattered, scene, depth - 1, options, brdf_pdf, true);
+    }
+
+    Color direct = direct_delta_lights(rec, scene);
+
+    if (!scene.emissive_objects.empty()) {
+        double r1 = random_double(), r2 = random_double();
+        size_t idx = static_cast<size_t>(random_double() * scene.emissive_objects.size());
+        if (idx >= scene.emissive_objects.size()) idx = scene.emissive_objects.size() - 1;
+        const EmissiveObject& eo = scene.emissive_objects[idx];
+        Vec3 light_normal;
+        Point3 light_point = eo.geometry->sample_point(r1, r2, &light_normal);
+
+        Vec3 to_light = light_point - rec.p;
+        double dist2 = to_light.length_squared();
+        if (dist2 > 1e-8) {
+            double dist = std::sqrt(dist2);
+            Vec3 light_dir = to_light / dist;
+            double n_dot_l = dot(rec.normal, light_dir);
+            if (n_dot_l > 0) {
+                double cos_light = dot(light_normal, -light_dir);
+                if (cos_light > 0) {
+                    Ray shadow_ray(rec.p + 0.001 * rec.normal, light_dir);
+                    if (!is_shadowed(*scene.world, shadow_ray, dist - 0.001)) {
+                        double total_area = 0;
+                        for (const EmissiveObject& e : scene.emissive_objects) total_area += e.geometry->area();
+                        double pdf_light = (dist2 / cos_light) / total_area;
+                        Ray light_ray(rec.p, light_dir);
+                        Color f_val = rec.material ? rec.material->f(r, light_ray, rec) : Color(0,0,0);
+                        double brdf_pdf = rec.material ? rec.material->pdf(r, light_ray, rec) : 0;
+                        double w_light = pdf_light / (pdf_light + brdf_pdf);
+                        direct += eo.emission * f_val * n_dot_l * w_light / pdf_light;
+                    }
+                }
+            }
+        }
+    }
+
+    if (options.direct_only) return emission + direct;
+    if (!did_scatter) return emission + direct;
+
+    double brdf_pdf = rec.material->pdf(r, scattered, rec);
+    Color f_val = rec.material->f(r, scattered, rec);
+    if (brdf_pdf <= 0) {
+        return emission + direct + attenuation * ray_color(scattered, scene, depth - 1, options, 1.0, true);
+    }
+
+    Color indirect = f_val * dot(rec.normal, scattered.direction) / brdf_pdf
+                   * ray_color(scattered, scene, depth - 1, options, brdf_pdf, true);
+
+    return emission + direct + indirect;
 }
 
 void print_usage(const char* prog) {
@@ -200,7 +267,7 @@ int main(int argc, char* argv[]) {
                     double offset_y = (render_options.direct_only && scene.samples == 1) ? 0.5 : random_double();
                     double u = (i + offset_x) / (scene.width - 1);
                     double v = (sample_row + offset_y) / (scene.height - 1);
-                    col += ray_color(scene.camera->get_ray(u, v), scene, scene.max_depth, render_options);
+                    col += ray_color(scene.camera->get_ray(u, v), scene, scene.max_depth, render_options, infinity, false);
                 }
                 pixels[j * scene.width + i] = col;
             }

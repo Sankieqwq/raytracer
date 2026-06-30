@@ -23,6 +23,16 @@ public:
         return Color(0.8, 0.8, 0.8);
     }
     virtual bool is_transparent() const { return false; }
+    virtual Color f(const Ray& r_in, const Ray& scattered, const HitRecord& rec) const {
+        (void)r_in; (void)scattered; (void)rec;
+        return Color(0, 0, 0);
+    }
+    virtual double pdf(const Ray& r_in, const Ray& scattered, const HitRecord& rec) const {
+        (void)r_in; (void)scattered; (void)rec;
+        return 0;
+    }
+    virtual bool is_specular() const { return false; }
+    virtual bool is_emissive() const { return false; }
 };
 
 class Lambertian : public Material {
@@ -48,6 +58,17 @@ public:
         scattered = Ray(rec.p, dir);
         attenuation = base_color(rec);
         return true;
+    }
+
+    Color f(const Ray& r_in, const Ray& scattered, const HitRecord& rec) const override {
+        (void)r_in; (void)scattered;
+        return base_color(rec) / pi;
+    }
+
+    double pdf(const Ray& r_in, const Ray& scattered, const HitRecord& rec) const override {
+        (void)r_in;
+        double cos_theta = dot(rec.normal, scattered.direction);
+        return cos_theta > 0 ? cos_theta / pi : 0;
     }
 };
 
@@ -75,6 +96,8 @@ public:
         attenuation = base_color(rec);
         return dot(scattered.direction, rec.normal) > 0;
     }
+
+    bool is_specular() const override { return true; }
 };
 
 class Dielectric : public Material {
@@ -94,6 +117,7 @@ public:
     }
 
     bool is_transparent() const override { return true; }
+    bool is_specular() const override { return true; }
 
     bool scatter(const Ray& r_in, const HitRecord& rec,
                  Color& attenuation, Ray& scattered,
@@ -212,6 +236,8 @@ public:
         scattered = Ray(rec.p, scattered_dir);
         return true;
     }
+
+    bool is_specular() const override { return true; }
 };
 
 // Emissive material (area light)
@@ -236,6 +262,8 @@ public:
         emission_out = emission;
         return false;
     }
+
+    bool is_emissive() const override { return true; }
 };
 
 #endif

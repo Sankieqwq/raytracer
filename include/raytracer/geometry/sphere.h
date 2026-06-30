@@ -56,6 +56,17 @@ public:
         return true;
     }
 
+    Point3 sample_point(double r1, double r2, Vec3* normal_out = nullptr) const override {
+        double z = 1.0 - 2.0 * r1;
+        double r = std::sqrt(std::max(0.0, 1.0 - z * z));
+        double phi = 2.0 * pi * r2;
+        Vec3 dir(r * std::cos(phi), r * std::sin(phi), z);
+        if (normal_out) *normal_out = dir;
+        return center + radius * dir;
+    }
+
+    double area() const override { return 4.0 * pi * radius * radius; }
+
 private:
     static void get_sphere_uv(const Point3& p, double& u, double& v) {
         double theta = std::acos(-p.y);
