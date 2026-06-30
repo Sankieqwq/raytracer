@@ -897,9 +897,10 @@ def compatible_panels():
     }
 
     # Keep Blender-owned panels only when they edit data that the exporter reads
-    # or when they are generic render/display helpers. A broad compatibility pass
-    # makes unsupported panels such as Line Art, Freestyle and shadow settings look
-    # like Raytracer features.
+    # or when they are generic render/display helpers. Surface panels are selected
+    # as a native panel family so Blender keeps exposing supported Principled BSDF
+    # sockets such as base color, metallic, roughness, alpha, transmission, IOR and
+    # emission without showing duplicate engine variants.
     exact_names = {
         "RENDER_PT_output",
         "RENDER_PT_format",
@@ -910,7 +911,7 @@ def compatible_panels():
         "RENDER_PT_color_management",
         "RENDER_PT_simplify",
         "MATERIAL_PT_context_material",
-        "MATERIAL_PT_surface",
+        "MATERIAL_PT_preview",
         "MATERIAL_PT_viewport",
         "WORLD_PT_context_world",
         "DATA_PT_context_light",
@@ -924,16 +925,27 @@ def compatible_panels():
         "DATA_PT_camera_safe_areas",
     }
 
-    allowed_prefixes = (
+    allowed_prefixes = ()
+
+    available_panel_names = {panel.__name__ for panel in bpy.types.Panel.__subclasses__()}
+    preferred_material_surface_panels = (
+        "EEVEE_MATERIAL_PT_surface",
+        "CYCLES_MATERIAL_PT_surface",
         "MATERIAL_PT_surface",
     )
+    material_panel_name = next(
+        (name for name in preferred_material_surface_panels if name in available_panel_names),
+        None,
+    )
+    if material_panel_name is not None:
+        exact_names.add(material_panel_name)
+        allowed_prefixes += (material_panel_name,)
 
     preferred_world_surface_panels = (
         "EEVEE_WORLD_PT_surface",
         "CYCLES_WORLD_PT_surface",
         "WORLD_PT_surface",
     )
-    available_panel_names = {panel.__name__ for panel in bpy.types.Panel.__subclasses__()}
     world_panel_name = next(
         (name for name in preferred_world_surface_panels if name in available_panel_names),
         None,
