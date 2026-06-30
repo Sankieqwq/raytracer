@@ -40,6 +40,13 @@ struct LoadedMaterialData {
     double roughness = 0.6;
     double alpha = 1.0;
     int base_color_texture = -1;
+    int metallic_roughness_texture = -1;
+    int normal_texture = -1;
+    Color emissive = Color(0, 0, 0);
+    int emissive_texture = -1;
+    bool double_sided = false;
+    Color attenuation_color = Color(1, 1, 1);
+    double attenuation_distance = infinity;
     bool alpha_blend = false;       // alphaMode == "BLEND"
     double transmission = 0.0;      // KHR_materials_transmission
     double ior = 1.5;               // KHR_materials_ior (glTF default)

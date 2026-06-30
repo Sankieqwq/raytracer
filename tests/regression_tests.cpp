@@ -221,6 +221,16 @@ void test_output_format_detection() {
           "unknown extension should preserve old PPM behavior");
 }
 
+void test_loaded_material_emissive_routes_to_emissive() {
+    Scene scene;
+    ObjMeshData mesh;
+    LoadedMaterialData data;
+    data.emissive = Color(2, 3, 4);
+
+    Material* mat = add_loaded_material(mesh, data, scene);
+    check(mat->is_emissive(), "GLB emissiveFactor should route to Emissive material");
+}
+
 void test_random_seed_repeats_sequence() {
     set_random_seed(1234);
     double a = random_double();
@@ -291,6 +301,7 @@ int main() {
     test_pbr_exposes_brdf_and_pdf_for_direct_lighting();
     test_display_color_exposure_and_tone_mapping();
     test_output_format_detection();
+    test_loaded_material_emissive_routes_to_emissive();
     test_random_seed_repeats_sequence();
     test_collect_emissive_objects_uses_only_emissive_mesh_triangles();
     test_mirror_glass_water_acceptance_scene_loads();

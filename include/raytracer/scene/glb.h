@@ -291,6 +291,22 @@ inline LoadedMaterialData glb_material_data(const JsonValue& material) {
         if (pbr.has("baseColorTexture")) {
             data.base_color_texture = json_int(pbr.at("baseColorTexture"), "index", -1);
         }
+        if (pbr.has("metallicRoughnessTexture")) {
+            data.metallic_roughness_texture = json_int(pbr.at("metallicRoughnessTexture"), "index", -1);
+        }
+    }
+
+    if (material.has("normalTexture")) {
+        data.normal_texture = json_int(material.at("normalTexture"), "index", -1);
+    }
+    if (material.has("emissiveFactor")) {
+        data.emissive = glb_to_vec3(material.at("emissiveFactor"));
+    }
+    if (material.has("emissiveTexture")) {
+        data.emissive_texture = json_int(material.at("emissiveTexture"), "index", -1);
+    }
+    if (material.has("doubleSided")) {
+        data.double_sided = material.at("doubleSided").boolVal;
     }
 
     if (material.has("alphaMode") && material.at("alphaMode").strVal == "BLEND") {
@@ -307,6 +323,11 @@ inline LoadedMaterialData glb_material_data(const JsonValue& material) {
         if (exts.has("KHR_materials_ior")) {
             const JsonValue& ior_ext = exts.at("KHR_materials_ior");
             data.ior = json_double(ior_ext, "ior", 1.5);
+        }
+        if (exts.has("KHR_materials_volume")) {
+            const JsonValue& volume = exts.at("KHR_materials_volume");
+            if (volume.has("attenuationColor")) data.attenuation_color = glb_to_vec3(volume.at("attenuationColor"));
+            if (volume.has("attenuationDistance")) data.attenuation_distance = volume.at("attenuationDistance").numVal;
         }
     }
 

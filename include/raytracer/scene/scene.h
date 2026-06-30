@@ -261,7 +261,9 @@ inline Material* add_loaded_material(const ObjMeshData& mesh,
                                       const LoadedMaterialData& data,
                                       Scene& scene) {
     std::unique_ptr<Material> mat;
-    if (data.transmission > 0.5 || data.alpha_blend) {
+    if (data.emissive.length_squared() > 1e-12) {
+        mat = std::make_unique<Emissive>(data.emissive);
+    } else if (data.transmission > 0.5 || data.alpha_blend) {
         mat = std::make_unique<Dielectric>(data.ior, make_loaded_texture(mesh, data));
     } else if (data.metallic > 0.5) {
         double fuzz = std::clamp(data.roughness, 0.0, 1.0);
