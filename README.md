@@ -87,6 +87,36 @@ python3 scripts/render_report.py --samples 64 --threads 0 --out reports/render_r
 
 `scripts/render_report.py` 会批量渲染场景 → 校验 PNG → 生成 contact sheet 拼图 → 输出 `report.md`（含每场景 mean_luma / sat_pct / 渲染耗时 + Pass/Needs-work 验收标记）和 `metrics.json`。每轮 PR 都可用它附视觉验收结果。需要 Pillow 才能生成 contact sheet 与 luma 指标。
 
+`--threads 0` 表示使用全部 CPU 硬件线程（默认值，多线程并行渲染）；指定 `--threads 1` 则单线程渲染，便于确定性复现或性能对比。
+
+### HTML 优美验收报告（含高清原图）
+
+```bash
+# 一键生成：自动渲染缩略图（64 spp）+ 高清原图（512 spp）+ 自包含 HTML 报告
+python3 scripts/html_report.py \
+    --render-dir reports/render_html \
+    --benchmark reports/benchmark_20260701.json \
+    --out reports/render_html/report.html \
+    --samples 64 --hq-samples 512 --threads 0
+
+# 在浏览器打开
+open reports/render_html/report.html
+```
+
+`scripts/html_report.py` 生成单文件自包含 HTML 报告（深色主题卡片布局 + 分类筛选 + 性能对比表 + 验收徽章）。每张场景卡片底部有 "View high-res (512 spp, WxH)" 按钮，点击打开全屏 modal 灗箱查看该场景的 512 采样高清原图（支持 Esc / X 关闭、点击图片在新标签打开完整分辨率）。所有图片以 base64 内嵌，HTML 可直接邮件/PR 附件传送。
+
+关键参数：
+
+| 参数 | 含义 | 默认值 |
+|------|------|--------|
+| `--samples <n>` | 缩略图采样数（卡片用，加载快） | 64 |
+| `--hq-samples <n>` | 高清原图采样数（modal 链接用）；设为 0 关闭 HQ | 512 |
+| `--threads <n>` | 渲染线程数；`0` = 全部硬件线程（多线程并行） | 0 |
+| `--scenes <s1 s2 ...>` | 可选子集场景 | 全部 14 个默认场景 |
+| `--force-rerender` | 即使已有渲染图也重新渲染 | 关闭 |
+
+如果 `--render-dir` 里缺少 `metrics.json`、缩略图或高清图，脚本会**自动调用** `render_report.py` 先渲染再生成 HTML，所以只需要跑这一条命令即可。`--benchmark` 可选，提供后会额外展示 1 线程 vs 多线程的加速比表。
+
 ### 运行
 
 ```bash
@@ -550,7 +580,7 @@ raytracer/
 - ✅ glTF 透明材质完整接入：`KHR_materials_volume` thicknessFactor/thicknessTexture + `KHR_materials_transmission` transmissionTexture 真正参与着色
 - ✅ GLB/OBJ 导入兼容：`alphaMode: MASK` + `alphaCutoff` 真正生效、`doubleSided` 背面不剔除、`KHR_texture_transform` UV scale/offset、MTL `map_Ks` / `map_Ns` / `map_d` 贴图
 - ✅ 性能 profiling：`--stats-format json` + `scripts/benchmark_report.py`（CSV/JSON/MD，分类定位透明/网格重瓶颈）
-- ✅ 渲染质量自动报告：`scripts/render_report.py`（批量渲染 → PNG 校验 → contact sheet → markdown 验收报告）
+- ✅ 渲染质量自动报告：`scripts/render_report.py`（批量渲染 → PNG 校验 → contact sheet → markdown 验收报告）+ `scripts/html_report.py`（自包含 HTML 报告 + 高清原图 modal 灗箱）
 - ✅ Golden 回归覆盖扩展：default、mirror_glass_water、Khronos CompareMetallic/Attenuation/CompareRoughness/TransmissionRoughness、OBJ MTL、扩展 MTL、glass_emissive、bunny、no-normal OBJ、studio_materials
 - ⬜ 后续：CUDA 移植
 
