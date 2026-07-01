@@ -11,6 +11,8 @@ build/
 # executable
 /raytracer
 
+reports/
+
 # IDE
 .vscode/
 .idea/
