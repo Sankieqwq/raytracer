@@ -288,6 +288,10 @@ open out.png
 | `scenes/mirror_glass_water.json` | 镜面金属 + 玻璃 + 水面 + PBR + 自发光面积灯验收场景 |
 | `scenes/khronos_water_bottle.json` | Khronos WaterBottle 官方 GLB 验收场景 |
 | `scenes/khronos_transmission_test.json` | Khronos TransmissionTest 官方 GLB 验收场景 |
+| `scenes/khronos_compare_metallic.json` | Khronos CompareMetallic 官方 GLB，验证 metallic 梯度和镜面响应 |
+| `scenes/khronos_compare_roughness.json` | Khronos CompareRoughness 官方 GLB，验证 roughness 梯度和高光扩散 |
+| `scenes/khronos_attenuation_test.json` | Khronos AttenuationTest 官方 GLB，验证透明体积衰减 |
+| `scenes/khronos_transmission_roughness_test.json` | Khronos TransmissionRoughnessTest 官方 GLB，验证粗糙透射 |
 
 ### 官方测试资产
 
