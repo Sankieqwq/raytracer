@@ -78,15 +78,6 @@ Color direct_delta_lights(const Ray& r_in, const HitRecord& rec, const Scene& sc
 
 Color ray_color(const Ray& r, const Scene& scene, int depth,
                 const RenderOptions& options,
-                double prev_pdf, bool prev_brdf);
-
-// Russian roulette helper for specular/transparent paths.
-Color ray_color_roulette(const Ray& r, const Scene& scene, int depth,
-                         const RenderOptions& options,
-                         const HitRecord& rec, const Color& throughput);
-
-Color ray_color(const Ray& r, const Scene& scene, int depth,
-                const RenderOptions& options,
                 double prev_pdf, bool prev_brdf) {
     if (depth <= 0) return Color(0, 0, 0);
 
@@ -131,15 +122,24 @@ Color ray_color(const Ray& r, const Scene& scene, int depth,
         if (options.direct_only) return emission;
         if (!did_scatter) return emission;
 
-        // Russian roulette for specular / transparent paths: once the ray has
-        // bounced several times, randomly terminate low-contribution paths
-        // and scale up survivors. This cuts wasted work on long transparent
-        // chains (glass, water) without darkening the result.
-        Color result = attenuation * ray_color_roulette(scattered, scene, depth - 1, options, rec, attenuation);
-        double brdf_pdf = rec.material->pdf(r, scattered, rec);
-        if (brdf_pdf <= 0) brdf_pdf = 1;
-        (void)brdf_pdf;  // specular delta paths have implicit pdf=1
-        return emission + result;
+        // Russian roulette for specular / transparent paths: after several
+        // bounces have been used, randomly terminate low-throughput paths
+        // and scale survivors by 1/p to stay unbiased. prev_pdf is 1.0
+        // because delta specular paths have an implicit BRDF pdf of 1.
+        // bounces_done counts up from 0 (depth counts down from max_depth).
+        int bounces_done = scene.max_depth - depth;
+        bool rr_active = bounces_done >= 5;
+        double p = 1.0;
+        if (rr_active) {
+            double lum = 0.2126 * attenuation.x + 0.7152 * attenuation.y + 0.0722 * attenuation.z;
+            p = std::min(0.95, std::max(0.1, lum));
+            if (random_double() > p) {
+                return emission;  // path terminated, contribution is 0
+            }
+        }
+        Color child = ray_color(scattered, scene, depth - 1, options, 1.0, true);
+        if (rr_active) child = child / p;
+        return emission + attenuation * child;
     }
 
     Color direct = direct_delta_lights(r, rec, scene);
@@ -186,28 +186,6 @@ Color ray_color(const Ray& r, const Scene& scene, int depth,
                    * ray_color(scattered, scene, depth - 1, options, brdf_pdf, true);
 
     return emission + direct + indirect;
-}
-
-// Russian roulette helper for specular/transparent paths. Scales the
-// recursive contribution by 1/p when the path survives, keeping the
-// expected value unchanged while cutting compute on deep bounces.
-Color ray_color_roulette(const Ray& r, const Scene& scene, int depth,
-                         const RenderOptions& options,
-                         const HitRecord& rec, const Color& throughput) {
-    // Only apply RR after a few bounces so early paths stay unbiased and
-    // noise-free. Use a luminance-based continuation probability capped at
-    // 0.95 to avoid infinite loops.
-    if (depth >= 4) {
-        double lum = 0.2126 * throughput.x + 0.7152 * throughput.y + 0.0722 * throughput.z;
-        double p = std::min(0.95, std::max(0.05, lum));
-        if (random_double() > p) {
-            return Color(0, 0, 0);
-        }
-        Color child = ray_color(r, scene, depth, options, infinity, true);
-        return child / p;
-    }
-    (void)rec;
-    return ray_color(r, scene, depth, options, infinity, true);
 }
 
 void print_usage(const char* prog) {
