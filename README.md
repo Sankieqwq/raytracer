@@ -99,6 +99,12 @@ python3 scripts/html_report.py \
     --out reports/render_html/report.html \
     --samples 64 --hq-samples 512 --threads 0
 
+# 只出缩略图报告，关闭 HQ
+python3 scripts/html_report.py \
+    --render-dir reports/render_quick \
+    --out reports/render_quick/report.html \
+    --samples 32 --hq-samples 0 --threads 0
+
 # 在浏览器打开
 open reports/render_html/report.html
 ```
