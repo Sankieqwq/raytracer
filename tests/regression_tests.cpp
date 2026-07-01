@@ -376,6 +376,14 @@ void test_random_seed_repeats_sequence() {
     check(near(b, random_double()), "second random sample should repeat after seed reset");
 }
 
+void test_random_double_stays_in_unit_interval() {
+    set_random_seed(4321);
+    for (int i = 0; i < 1000; i++) {
+        double v = random_double();
+        check(v >= 0.0 && v < 1.0, "random_double should stay in [0, 1)");
+    }
+}
+
 void test_collect_emissive_objects_uses_only_emissive_mesh_triangles() {
     Scene scene;
 
@@ -444,6 +452,7 @@ int main() {
     test_loaded_glb_volume_attenuation_reaches_dielectric();
     test_json_dielectric_accepts_volume_attenuation();
     test_random_seed_repeats_sequence();
+    test_random_double_stays_in_unit_interval();
     test_collect_emissive_objects_uses_only_emissive_mesh_triangles();
     test_mirror_glass_water_acceptance_scene_loads();
 
