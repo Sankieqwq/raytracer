@@ -37,8 +37,27 @@ struct RenderOutput {
 };
 
 inline bool is_shadowed(const Hittable& world, const Ray& shadow_ray, double max_t) {
-    HitRecord shadow_rec;
-    return world.hit(shadow_ray, 0.001, max_t, shadow_rec);
+    Ray ray = shadow_ray;
+    double remaining_t = max_t;
+    for (int skip_count = 0; skip_count < 16; skip_count++) {
+        HitRecord shadow_rec;
+        if (!world.hit(ray, 0.001, remaining_t, shadow_rec)) return false;
+
+        if (shadow_rec.material && shadow_rec.material->is_alpha_masked()) {
+            Color bc = shadow_rec.material->base_color(shadow_rec);
+            double alpha = std::max({bc.x, bc.y, bc.z});
+            if (alpha < shadow_rec.material->alpha_cutoff()) {
+                Vec3 dir = ray.direction.normalized();
+                remaining_t -= shadow_rec.t;
+                if (remaining_t <= 0.001) return false;
+                ray = Ray(shadow_rec.p + 0.001 * dir, ray.direction);
+                continue;
+            }
+        }
+
+        return true;
+    }
+    return false;
 }
 
 inline const EmissiveObject* sample_emissive_by_area(const Scene& scene,
@@ -112,18 +131,20 @@ inline Color ray_color(const Ray& r, const Scene& scene, int depth,
         return emitted;
     }
 
+    if (rec.material && rec.material->is_alpha_masked()) {
+        Color bc = rec.material->base_color(rec);
+        double alpha = std::max({bc.x, bc.y, bc.z});
+        if (alpha < rec.material->alpha_cutoff()) {
+            Vec3 continue_dir = r.direction.normalized();
+            return ray_color(Ray(rec.p + 0.001 * continue_dir, r.direction), scene, depth,
+                             options, prev_pdf, prev_brdf);
+        }
+    }
+
     Ray scattered;
     Color attenuation, scatter_emission;
     bool did_scatter = rec.material && rec.material->scatter(r, rec, attenuation, scattered, scatter_emission);
     Color emission = scatter_emission + (rec.material ? rec.material->emitted(rec) : Color(0, 0, 0));
-
-    if (rec.material && rec.material->is_alpha_masked() && did_scatter) {
-        Color bc = rec.material->base_color(rec);
-        double alpha = std::max({bc.x, bc.y, bc.z});
-        if (alpha < rec.material->alpha_cutoff()) {
-            return scene_background(scene, r);
-        }
-    }
 
     if (rec.material && rec.material->is_specular()) {
         if (options.direct_only) return emission;

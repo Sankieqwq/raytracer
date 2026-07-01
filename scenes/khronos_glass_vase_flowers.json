@@ -1,0 +1,48 @@
+{
+    "image": {
+        "width": 640,
+        "height": 360,
+        "samples": 32,
+        "max_depth": 32,
+        "output": "khronos_glass_vase_flowers.png",
+        "tone_map": "aces",
+        "exposure": 1.0,
+        "firefly_clamp": 10.0
+    },
+    "scene": {
+        "preset": "studio_softbox"
+    },
+    "environment": {
+        "type": "gradient",
+        "top": [0.48, 0.58, 0.72],
+        "bottom": [0.92, 0.90, 0.84],
+        "intensity": 0.9
+    },
+    "camera": {
+        "auto": true,
+        "view": "three_quarter",
+        "vfov": 32,
+        "margin": 1.55,
+        "target_offset": [0, 0.15, 0]
+    },
+    "ground": {
+        "enabled": true,
+        "material": {
+            "type": "lambertian",
+            "albedo": [0.58, 0.56, 0.52]
+        }
+    },
+    "objects": [
+        {
+            "type": "mesh",
+            "file": "../models/khronos/GlassVaseFlowers.glb",
+            "auto_fit": true,
+            "fit_size": 3.0,
+            "override_material": false,
+            "material": {
+                "type": "lambertian",
+                "albedo": [0.7, 0.7, 0.7]
+            }
+        }
+    ]
+}

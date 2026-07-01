@@ -2,6 +2,7 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 
+#include "raytracer/render/renderer.h"
 #include "raytracer/scene/scene.h"
 
 #include <cmath>
@@ -733,6 +734,60 @@ void test_collect_emissive_objects_uses_only_emissive_mesh_triangles() {
     }
 }
 
+void test_alpha_mask_hit_traces_past_discarded_surface() {
+    Scene scene;
+    scene.max_depth = 8;
+    scene.ambient_light = Color(0, 0, 0);
+    scene.lights.clear();
+    scene.environment.type = EnvironmentType::Solid;
+    scene.environment.color = Color(0, 0, 0);
+
+    auto mask = std::make_unique<Lambertian>(Color(0, 0, 0));
+    mask->alpha_masked = true;
+    mask->cutoff = 0.5;
+    Material* mask_ptr = mask.get();
+    scene.materials.push_back(std::move(mask));
+
+    auto glow = std::make_unique<Emissive>(Color(3, 1, 0.5));
+    Material* glow_ptr = glow.get();
+    scene.materials.push_back(std::move(glow));
+
+    auto front = std::make_unique<Sphere>(Point3(0, 0, -1.0), 0.45, mask_ptr);
+    scene.primitives.add(front.get());
+    scene.objects.push_back(std::move(front));
+
+    auto back = std::make_unique<Sphere>(Point3(0, 0, -2.0), 0.45, glow_ptr);
+    scene.primitives.add(back.get());
+    scene.objects.push_back(std::move(back));
+
+    scene.world = std::make_unique<LinearBVH>(scene.primitives.objects);
+    collect_emissive_objects(scene);
+
+    RenderOptions options;
+    Color c = ray_color(Ray(Point3(0, 0, 0), Vec3(0, 0, -1)), scene, scene.max_depth,
+                        options, infinity, false);
+
+    check(c.x > 2.5 && c.y > 0.8 && c.z > 0.4,
+          "alpha masked hits should continue tracing to geometry behind the discarded surface");
+}
+
+void test_alpha_masked_surfaces_do_not_cast_solid_shadows() {
+    Scene scene;
+    auto mask = std::make_unique<Lambertian>(Color(0, 0, 0));
+    mask->alpha_masked = true;
+    mask->cutoff = 0.5;
+    Material* mask_ptr = mask.get();
+    scene.materials.push_back(std::move(mask));
+
+    auto front = std::make_unique<Sphere>(Point3(0, 0, -1.0), 0.45, mask_ptr);
+    scene.primitives.add(front.get());
+    scene.objects.push_back(std::move(front));
+    scene.world = std::make_unique<LinearBVH>(scene.primitives.objects);
+
+    bool blocked = is_shadowed(*scene.world, Ray(Point3(0, 0, 0), Vec3(0, 0, -1)), 3.0);
+    check(!blocked, "alpha masked discarded hits should not cast solid direct-light shadows");
+}
+
 void test_mirror_glass_water_acceptance_scene_loads() {
     Scene scene;
     load_scene("scenes/mirror_glass_water.json", scene);
@@ -781,6 +836,8 @@ int main() {
     test_random_seed_repeats_sequence();
     test_random_double_stays_in_unit_interval();
     test_collect_emissive_objects_uses_only_emissive_mesh_triangles();
+    test_alpha_mask_hit_traces_past_discarded_surface();
+    test_alpha_masked_surfaces_do_not_cast_solid_shadows();
     test_mirror_glass_water_acceptance_scene_loads();
 
     if (failures != 0) {

@@ -4,17 +4,20 @@
         "height": 600,
         "samples": 32,
         "max_depth": 32,
-        "output": "glass_bottle.ppm"
+        "output": "glass.png",
+        "tone_map": "aces",
+        "exposure": 1.0,
+        "firefly_clamp": 10.0
     },
     "camera": {
         "lookfrom": [
             4,
-            2.5,
+            2.2,
             4
         ],
         "lookat": [
             0,
-            1.5,
+            1.35,
             0
         ],
         "vup": [
@@ -22,7 +25,7 @@
             1,
             0
         ],
-        "vfov": 30,
+        "vfov": 34,
         "aperture": 0.0,
         "focus_dist": 5.74
     },
@@ -41,26 +44,16 @@
         {
             "type": "mesh",
             "file": "../models/glb/glass.glb",
-            "transform": {
-                "rotate": [
-                    -90,
-                    0,
-                    0
-                ],
-                "scale": 2.412,
-                "translate": [
-                    0,
-                    2.916,
-                    0
-                ]
-            },
+            "auto_fit": true,
+            "fit_size": 2.7,
+            "fit_center": [0, 1.35, 0],
             "override_material": true,
             "material": {
                 "type": "dielectric",
                 "ior": 1.5,
                 "albedo": [0.97, 0.99, 1.0],
                 "attenuation_color": [0.82, 0.94, 1.0],
-                "attenuation_distance": 1.6
+                "attenuation_distance": 1.1
             }
         }
     ]

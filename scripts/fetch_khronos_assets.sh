@@ -28,3 +28,9 @@ download "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main
     "models/khronos/AttenuationTest.glb"
 download "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/TransmissionRoughnessTest/glTF-Binary/TransmissionRoughnessTest.glb" \
     "models/khronos/TransmissionRoughnessTest.glb"
+download "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/GlassVaseFlowers/glTF-Binary/GlassVaseFlowers.glb" \
+    "models/khronos/GlassVaseFlowers.glb"
+download "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/GlassBrokenWindow/glTF-Binary/GlassBrokenWindow.glb" \
+    "models/khronos/GlassBrokenWindow.glb"
+download "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/GlassHurricaneCandleHolder/glTF-Binary/GlassHurricaneCandleHolder.glb" \
+    "models/khronos/GlassHurricaneCandleHolder.glb"

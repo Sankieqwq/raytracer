@@ -40,6 +40,9 @@ DEFAULT_SCENES = [
     "scenes/obj_mtl_test.json",
     "scenes/khronos_water_bottle.json",
     "scenes/khronos_transmission_test.json",
+    "scenes/khronos_glass_vase_flowers.json",
+    "scenes/khronos_glass_broken_window.json",
+    "scenes/khronos_glass_hurricane_candle_holder.json",
     "scenes/studio_materials.json",
 ]
 

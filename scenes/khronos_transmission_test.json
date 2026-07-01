@@ -6,7 +6,8 @@
         "max_depth": 32,
         "output": "khronos_transmission_test.png",
         "tone_map": "aces",
-        "exposure": 1.0
+        "exposure": 0.95,
+        "firefly_clamp": 10.0
     },
     "camera": {
         "auto": true,

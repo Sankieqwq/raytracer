@@ -59,6 +59,11 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(golden_khronos_attenuation_test PROPERTIES
         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
+    add_test(NAME golden_khronos_water_bottle
+        COMMAND sh -c "$<TARGET_FILE:raytracer> --scene tests/golden/scenes/golden_khronos_water_bottle.json --threads 1 --out /tmp/golden_khronos_water_bottle.png && ${Python3_EXECUTABLE} tests/golden/compare_images.py --actual /tmp/golden_khronos_water_bottle.png --expected tests/golden/images/golden_khronos_water_bottle.png")
+    set_tests_properties(golden_khronos_water_bottle PROPERTIES
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
     add_test(NAME golden_obj_mtl_test
         COMMAND sh -c "$<TARGET_FILE:raytracer> --scene tests/golden/scenes/golden_obj_mtl_test.json --threads 1 --out /tmp/golden_obj_mtl_test.png && ${Python3_EXECUTABLE} tests/golden/compare_images.py --actual /tmp/golden_obj_mtl_test.png --expected tests/golden/images/golden_obj_mtl_test.png")
     set_tests_properties(golden_obj_mtl_test PROPERTIES
