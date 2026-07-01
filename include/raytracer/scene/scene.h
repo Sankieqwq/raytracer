@@ -192,7 +192,14 @@ inline Material* parse_material(const JsonValue& m,
         mat = std::make_unique<Metal>(material_texture_or_color(m, base_dir, albedo), fuzz);
     } else if (type == "dielectric") {
         Color alb = m.has("albedo") ? to_vec3(m.at("albedo")) : Color(1.0, 1.0, 1.0);
-        mat = std::make_unique<Dielectric>(m.at("ior").numVal, alb);
+        auto dielectric = std::make_unique<Dielectric>(m.at("ior").numVal, alb);
+        if (m.has("attenuation_color")) {
+            dielectric->attenuation_color = to_vec3(m.at("attenuation_color"));
+        }
+        if (m.has("attenuation_distance")) {
+            dielectric->attenuation_distance = m.at("attenuation_distance").numVal;
+        }
+        mat = std::move(dielectric);
     } else if (type == "pbr") {
         auto albedo_tex = parse_texture_color(m, "albedo", Color(0.8, 0.8, 0.8), base_dir);
         auto metallic_tex = parse_texture_scalar(m, "metallic", 0.0, base_dir);

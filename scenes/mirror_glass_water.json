@@ -51,7 +51,9 @@
             "material": {
                 "type": "dielectric",
                 "ior": 1.52,
-                "albedo": [0.93, 0.98, 1.0]
+                "albedo": [0.96, 0.99, 1.0],
+                "attenuation_color": [0.78, 0.92, 1.0],
+                "attenuation_distance": 1.1
             }
         },
         {
@@ -83,7 +85,9 @@
             "material": {
                 "type": "dielectric",
                 "ior": 1.333,
-                "albedo": [0.68, 0.90, 1.0]
+                "albedo": [0.84, 0.95, 1.0],
+                "attenuation_color": [0.70, 0.90, 1.0],
+                "attenuation_distance": 4.0
             }
         },
         {

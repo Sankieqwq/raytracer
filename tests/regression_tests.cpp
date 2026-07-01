@@ -46,6 +46,13 @@ JsonValue number(double value) {
     return v;
 }
 
+JsonValue string_value(const std::string& value) {
+    JsonValue v;
+    v.type = JsonValue::String;
+    v.strVal = value;
+    return v;
+}
+
 JsonValue array3(double x, double y, double z) {
     JsonValue v;
     v.type = JsonValue::Array;
@@ -333,6 +340,33 @@ void test_loaded_glb_volume_attenuation_reaches_dielectric() {
     }
 }
 
+void test_json_dielectric_accepts_volume_attenuation() {
+    Scene scene;
+    JsonValue material;
+    material.type = JsonValue::Object;
+    material.objVal["type"] = string_value("dielectric");
+    material.objVal["ior"] = number(1.333);
+    material.objVal["albedo"] = array3(1.0, 1.0, 1.0);
+    material.objVal["attenuation_color"] = array3(0.4, 0.7, 1.0);
+    material.objVal["attenuation_distance"] = number(3.0);
+
+    Material* mat = parse_material(material, scene);
+    auto* dielectric = dynamic_cast<Dielectric*>(mat);
+    check(dielectric != nullptr, "JSON dielectric material should parse attenuation fields");
+    if (dielectric) {
+        HitRecord rec;
+        rec.p = Point3(0, 0, 0);
+        rec.normal = Vec3(0, 1, 0);
+        rec.front_face = false;
+        rec.t = 3.0;
+        Color attenuation, emission;
+        Ray scattered;
+        dielectric->scatter(Ray(Point3(0, 0, 0), Vec3(0, 1, 0)), rec, attenuation, scattered, emission);
+        check(near_vec(attenuation, Color(0.4, 0.7, 1.0), 1e-6),
+              "JSON dielectric attenuation should tint rays exiting the medium");
+    }
+}
+
 void test_random_seed_repeats_sequence() {
     set_random_seed(1234);
     double a = random_double();
@@ -408,6 +442,7 @@ int main() {
     test_loaded_glb_pbr_uses_metallic_roughness_and_normal_textures();
     test_loaded_glb_pbr_emissive_texture_preserves_surface_shading();
     test_loaded_glb_volume_attenuation_reaches_dielectric();
+    test_json_dielectric_accepts_volume_attenuation();
     test_random_seed_repeats_sequence();
     test_collect_emissive_objects_uses_only_emissive_mesh_triangles();
     test_mirror_glass_water_acceptance_scene_loads();

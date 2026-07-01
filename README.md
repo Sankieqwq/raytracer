@@ -262,7 +262,7 @@ open out.png
 |------|----------|------|
 | `"lambertian"` | `albedo`: [r,g,b], `texture`: string/object | 漫反射（哑光） |
 | `"metal"` | `albedo`: [r,g,b], `texture`: string/object, `fuzz`: 0~1 | 金属反射，fuzz=0 镜面，越大越粗糙 |
-| `"dielectric"` | `ior`: float, `albedo`: [r,g,b]（可选） | 玻璃/水等透明介质，ior=1.5 玻璃，1.33 水；albedo 默认白色，设为颜色可渲染有色玻璃 |
+| `"dielectric"` | `ior`: float, `albedo`: [r,g,b]（可选）, `attenuation_color`: [r,g,b]（可选）, `attenuation_distance`: float（可选） | 玻璃/水等透明介质，ior=1.5 玻璃，1.33 水；`attenuation_*` 用 Beer-Lambert 近似表现厚玻璃/水体吸收 |
 | `"pbr"` | `albedo`/`metallic`/`roughness` + 各 `_map` + `normal_map` | Cook-Torrance 金属-粗糙度材质 |
 | `"emissive"` | `emission`: [r,g,b] | 自发光材质，可作为面光源 |
 

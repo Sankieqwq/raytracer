@@ -57,7 +57,10 @@
             "override_material": true,
             "material": {
                 "type": "dielectric",
-                "ior": 1.5
+                "ior": 1.5,
+                "albedo": [0.97, 0.99, 1.0],
+                "attenuation_color": [0.82, 0.94, 1.0],
+                "attenuation_distance": 1.6
             }
         }
     ]
