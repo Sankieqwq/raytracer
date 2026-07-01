@@ -1,0 +1,19 @@
+mtllib mtl_extended.mtl
+v 0 0 0
+v 1 0 0
+v 0 1 0
+v 1 1 0
+v 2 0 0
+v 2 1 0
+v 3 0 0
+v 3 1 0
+vt 0 0
+vt 1 0
+vt 0 1
+vt 1 1
+usemtl glow
+f 1/1 2/2 3/3
+usemtl glassy
+f 2/2 4/4 3/3
+usemtl shiny
+f 5/1 7/2 6/3

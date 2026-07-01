@@ -6,6 +6,7 @@
 #include "raytracer/geometry/triangle.h"  // triangle_intersect
 #include "raytracer/math/vec3.h"
 #include <algorithm>
+#include <limits>
 #include <vector>
 
 class TriangleMesh : public Hittable {
@@ -320,13 +321,118 @@ private:
             return node_idx;
         }
 
-        int axis = box.longest_axis();
-        std::sort(bvh_tri_indices_.begin() + start, bvh_tri_indices_.begin() + end,
-                  [&](int a, int b) {
-                      return axis_value(triangle_centroid(a), axis) <
-                             axis_value(triangle_centroid(b), axis);
-                  });
-        int mid = start + span / 2;
+        // Compute centroid bounds for SAH binning.
+        Point3 c_min( std::numeric_limits<double>::infinity(),
+                      std::numeric_limits<double>::infinity(),
+                      std::numeric_limits<double>::infinity());
+        Point3 c_max(-std::numeric_limits<double>::infinity(),
+                    -std::numeric_limits<double>::infinity(),
+                    -std::numeric_limits<double>::infinity());
+        for (int i = start; i < end; i++) {
+            Point3 c = triangle_centroid(bvh_tri_indices_[i]);
+            c_min = Point3(std::min(c_min.x, c.x), std::min(c_min.y, c.y), std::min(c_min.z, c.z));
+            c_max = Point3(std::max(c_max.x, c.x), std::max(c_max.y, c.y), std::max(c_max.z, c.z));
+        }
+
+        constexpr int NUM_BUCKETS = 12;
+        double best_cost = std::numeric_limits<double>::infinity();
+        int best_axis = -1, best_bucket = -1;
+
+        struct Bucket { int count = 0; AABB box; bool empty = true; };
+
+        for (int axis = 0; axis < 3; axis++) {
+            double lo = axis_value(c_min, axis);
+            double hi = axis_value(c_max, axis);
+            double ext = hi - lo;
+            if (ext <= 1e-12) continue;
+
+            Bucket buckets[NUM_BUCKETS];
+            for (int i = start; i < end; i++) {
+                int ti = bvh_tri_indices_[i];
+                double c = axis_value(triangle_centroid(ti), axis);
+                int b = static_cast<int>((c - lo) / ext * NUM_BUCKETS);
+                b = std::clamp(b, 0, NUM_BUCKETS - 1);
+                AABB tb = triangle_bounds(ti);
+                buckets[b].count++;
+                buckets[b].box = buckets[b].empty
+                    ? tb
+                    : AABB::surrounding_box(buckets[b].box, tb);
+                buckets[b].empty = false;
+            }
+
+            double parent_sa = box.surface_area();
+            if (parent_sa <= 0.0) parent_sa = 1.0;
+
+            for (int split = 1; split < NUM_BUCKETS; split++) {
+                int left_count = 0, right_count = 0;
+                AABB left_box, right_box;
+                bool left_empty = true, right_empty = true;
+                for (int i = 0; i < split; i++) {
+                    if (buckets[i].empty) continue;
+                    left_count += buckets[i].count;
+                    left_box = left_empty ? buckets[i].box
+                                          : AABB::surrounding_box(left_box, buckets[i].box);
+                    left_empty = false;
+                }
+                for (int i = split; i < NUM_BUCKETS; i++) {
+                    if (buckets[i].empty) continue;
+                    right_count += buckets[i].count;
+                    right_box = right_empty ? buckets[i].box
+                                            : AABB::surrounding_box(right_box, buckets[i].box);
+                    right_empty = false;
+                }
+                if (left_count == 0 || right_count == 0) continue;
+
+                double cost = (left_box.surface_area() * left_count +
+                               right_box.surface_area() * right_count) / parent_sa;
+                if (cost < best_cost) {
+                    best_cost = cost;
+                    best_axis = axis;
+                    best_bucket = split;
+                }
+            }
+        }
+
+        // No valid SAH split -> fall back to midpoint split on longest axis.
+        if (best_axis < 0) {
+            int axis = box.longest_axis();
+            std::sort(bvh_tri_indices_.begin() + start, bvh_tri_indices_.begin() + end,
+                      [&](int a, int b) {
+                          return axis_value(triangle_centroid(a), axis) <
+                                 axis_value(triangle_centroid(b), axis);
+                      });
+            int mid = start + span / 2;
+            int left = build_bvh_range(start, mid);
+            int right = build_bvh_range(mid, end);
+            bvh_nodes_[node_idx].left = left;
+            bvh_nodes_[node_idx].right = right;
+            return node_idx;
+        }
+
+        // Partition triangle indices by the chosen bucket boundary on best_axis.
+        double lo = axis_value(c_min, best_axis);
+        double hi = axis_value(c_max, best_axis);
+        double ext = hi - lo;
+        auto bucket_of = [&](int ti) {
+            double c = axis_value(triangle_centroid(ti), best_axis);
+            int b = static_cast<int>((c - lo) / ext * NUM_BUCKETS);
+            return std::clamp(b, 0, NUM_BUCKETS - 1);
+        };
+        int mid = static_cast<int>(std::partition(bvh_tri_indices_.begin() + start,
+                                                   bvh_tri_indices_.begin() + end,
+            [&](int ti) { return bucket_of(ti) < best_bucket; }
+        ) - bvh_tri_indices_.begin());
+
+        if (mid <= start || mid >= end) {
+            int axis = box.longest_axis();
+            std::sort(bvh_tri_indices_.begin() + start, bvh_tri_indices_.begin() + end,
+                      [&](int a, int b) {
+                          return axis_value(triangle_centroid(a), axis) <
+                                 axis_value(triangle_centroid(b), axis);
+                      });
+            mid = start + span / 2;
+        }
+
         int left = build_bvh_range(start, mid);
         int right = build_bvh_range(mid, end);
         bvh_nodes_[node_idx].left = left;

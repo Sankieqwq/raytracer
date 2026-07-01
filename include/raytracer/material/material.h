@@ -12,6 +12,23 @@
 #include <memory>
 #include <utility>
 
+// Beer-Lambert volume absorption for a homogeneous participating medium.
+//   T(distance) = attenuation_color^(distance / attenuation_distance)
+// When attenuation_color = (1,1,1) or distance is zero, no absorption.  When
+// attenuation_distance is infinite (vacuum/air), T = (1,1,1).  This matches the
+// glTF KHR_materials_volume spec: sigma_t = -log(attenuation_color) / attenuation_distance.
+inline Color beer_lambert(const Color& attenuation_color,
+                         double attenuation_distance,
+                         double distance) {
+    if (attenuation_distance <= 0.0 || !std::isfinite(attenuation_distance)) {
+        return Color(1, 1, 1);
+    }
+    double exponent = std::max(0.0, distance) / attenuation_distance;
+    return Color(std::pow(std::clamp(attenuation_color.x, 0.0, 1.0), exponent),
+                std::pow(std::clamp(attenuation_color.y, 0.0, 1.0), exponent),
+                std::pow(std::clamp(attenuation_color.z, 0.0, 1.0), exponent));
+}
+
 class Material {
 public:
     virtual ~Material() = default;
@@ -33,15 +50,30 @@ public:
     }
     virtual bool is_specular() const { return false; }
     virtual bool is_emissive() const { return false; }
+    virtual Color emitted(const HitRecord& rec) const {
+        (void)rec;
+        return Color(0, 0, 0);
+    }
+    // Alpha mask: when alpha_mask is true, hits with alpha < alpha_cutoff
+    // should be discarded (treated as a miss). The renderer checks this
+    // after scatter() and re-casts the ray if discarded.
+    virtual bool is_alpha_masked() const { return false; }
+    virtual double alpha_cutoff() const { return 0.5; }
+    // Double-sided: when true, the material shades both faces. For
+    // transparent materials this disables backface culling; for opaque
+    // it flips the normal so the front face always faces the ray.
+    virtual bool is_double_sided() const { return false; }
 };
 
 class Lambertian : public Material {
 public:
     std::shared_ptr<Texture> texture;
+    bool alpha_masked = false;
+    double cutoff = 0.5;
 
     explicit Lambertian(const Color& albedo)
         : texture(std::make_shared<SolidColorTexture>(albedo)) {}
-    explicit Lambertian(std::shared_ptr<Texture> texture)
+    Lambertian(std::shared_ptr<Texture> texture)
         : texture(std::move(texture)) {}
 
     Color base_color(const HitRecord& rec) const override {
@@ -70,6 +102,9 @@ public:
         double cos_theta = dot(rec.normal, scattered.direction);
         return cos_theta > 0 ? cos_theta / pi : 0;
     }
+
+    bool is_alpha_masked() const override { return alpha_masked; }
+    double alpha_cutoff() const override { return cutoff; }
 };
 
 class Metal : public Material {
@@ -105,8 +140,12 @@ public:
     double ior;
     Color albedo;
     std::shared_ptr<Texture> albedo_texture;
-    Color attenuation_color = Color(1.0, 1.0, 1.0);
-    double attenuation_distance = 0.0;
+    Color attenuation_color = Color(1, 1, 1);
+    double attenuation_distance = infinity;
+    double roughness = 0.0;
+    double transmission = 1.0;  // KHR_materials_transmission factor (0..1)
+    std::shared_ptr<Texture> transmission_texture;
+    bool double_sided = false;
 
     explicit Dielectric(double index_of_refraction, Color albedo = Color(1.0, 1.0, 1.0))
         : ior(index_of_refraction), albedo(albedo) {}
@@ -120,34 +159,79 @@ public:
 
     bool is_transparent() const override { return true; }
     bool is_specular() const override { return true; }
+    bool is_double_sided() const override { return double_sided; }
+
+    double transmission_value(const HitRecord& rec) const {
+        double t = transmission;
+        if (transmission_texture) {
+            t *= std::clamp(transmission_texture->value(rec.u, rec.v, rec.p).x, 0.0, 1.0);
+        }
+        return std::clamp(t, 0.0, 1.0);
+    }
 
     bool scatter(const Ray& r_in, const HitRecord& rec,
                  Color& attenuation, Ray& scattered,
                  Color& emission) const override {
         emission = Color(0, 0, 0);
-        Color base = base_color(rec);
-        if (attenuation_distance > 0 && !rec.front_face) {
-            double dist = rec.t;
-            double r = std::pow(attenuation_color.x, dist / attenuation_distance);
-            double g = std::pow(attenuation_color.y, dist / attenuation_distance);
-            double b = std::pow(attenuation_color.z, dist / attenuation_distance);
-            attenuation = base * Color(r, g, b);
-        } else {
-            attenuation = base;
-        }
+        // Beer-Lambert for the segment the incoming ray just traveled in its
+        // current medium.  For a ray in air this is (1,1,1); for a ray that
+        // already refracted into this dielectric (or a nested one) it applies
+        // volume absorption proportional to the path length rec.t.
+        attenuation = base_color(rec) *
+                      beer_lambert(r_in.medium_color, r_in.medium_attenuation_distance, rec.t);
         double ratio = rec.front_face ? (1.0 / ior) : ior;
         Vec3 unit_dir = r_in.direction.normalized();
         double cos_theta = std::fmin(dot(-unit_dir, rec.normal), 1.0);
         double sin_theta = std::sqrt(1.0 - cos_theta * cos_theta);
 
+        double trans = transmission_value(rec);
+        // With partial transmission, stochastically choose reflect vs refract
+        // weighted by Fresnel and transmission factor. When trans < 1, a
+        // fraction of rays reflect instead of refracting, modeling thin
+        // transparent surfaces.
         bool cannot_refract = ratio * sin_theta > 1.0;
+        double fresnel = schlick(cos_theta, ratio);
+        bool did_refract;
         Vec3 dir;
-        if (cannot_refract || schlick(cos_theta, ratio) > random_double())
+        if (cannot_refract || fresnel + (1.0 - fresnel) * (1.0 - trans) > random_double()) {
             dir = reflect(unit_dir, rec.normal);
-        else
+            did_refract = false;
+        } else {
             dir = refract(unit_dir, rec.normal, ratio);
+            did_refract = true;
+        }
+
+        double rough = std::clamp(roughness, 0.0, 1.0);
+        if (rough > 0.0) {
+            // Rough transmission: blur the outgoing direction. Scale the
+            // perturbation by rough^2 so low roughness stays sharp.
+            Vec3 rough_dir = dir + (rough * rough) * random_in_unit_sphere();
+            if (rough_dir.length_squared() > 1e-12 &&
+                dot(rough_dir, rec.normal) * dot(dir, rec.normal) >= 0.0) {
+                dir = rough_dir.normalized();
+            }
+        }
 
         scattered = Ray(rec.p, dir);
+        // Track the medium for Beer-Lambert along the next segment:
+        // - Refracting into the dielectric (front face hit): the scattered ray
+        //   now travels inside this medium, so tag it with our attenuation params.
+        // - Refracting out of the dielectric (back face hit): the scattered ray
+        //   exits to air/vacuum, so reset the medium to no-absorption defaults.
+        // - Reflection (TIR or Fresnel bounce): the ray stays in whatever medium
+        //   the incoming ray was in, preserving correct cumulative absorption.
+        if (did_refract) {
+            if (rec.front_face) {
+                scattered.medium_color = attenuation_color;
+                scattered.medium_attenuation_distance = attenuation_distance;
+            } else {
+                scattered.medium_color = Color(1, 1, 1);
+                scattered.medium_attenuation_distance = infinity;
+            }
+        } else {
+            scattered.medium_color = r_in.medium_color;
+            scattered.medium_attenuation_distance = r_in.medium_attenuation_distance;
+        }
         return true;
     }
 
@@ -166,7 +250,11 @@ public:
     std::shared_ptr<Texture> metallic;
     std::shared_ptr<Texture> roughness;
     std::shared_ptr<Texture> normal;
+    Color emission = Color(0, 0, 0);
+    std::shared_ptr<Texture> emission_texture;
     bool has_normal_map = false;
+    bool alpha_masked = false;
+    double cutoff = 0.5;
 
     PBR(std::shared_ptr<Texture> albedo_tex, double metallic_val, double roughness_val)
         : albedo(std::move(albedo_tex)),
@@ -178,29 +266,21 @@ public:
         return albedo->value(rec.u, rec.v, rec.p);
     }
 
+    Color emitted(const HitRecord& rec) const override {
+        if (!emission_texture) return emission;
+        return emission * emission_texture->value(rec.u, rec.v, rec.p);
+    }
+
     bool scatter(const Ray& r_in, const HitRecord& rec,
                  Color& attenuation, Ray& scattered,
                  Color& emission) const override {
         emission = Color(0, 0, 0);
 
-        Color base = base_color(rec);
-        double met = metallic->value(rec.u, rec.v, rec.p).x;
-        double rough = std::max(0.001, roughness->value(rec.u, rec.v, rec.p).x);
-        met = std::clamp(met, 0.0, 1.0);
-        rough = std::clamp(rough, 0.001, 1.0);
-
-        Vec3 n = rec.normal;
-        if (has_normal_map && rec.has_tangent) {
-            Color ns = normal->value(rec.u, rec.v, rec.p);
-            Vec3 tn = Vec3(2 * ns.x - 1, 2 * ns.y - 1, 2 * ns.z - 1).normalized();
-            Vec3 T = rec.tangent.normalized();
-            Vec3 B = cross(n, T).normalized();
-            n = (T * tn.x + B * tn.y + n * tn.z).normalized();
-            if (dot(n, rec.normal) < 0) n = -n;
-        }
-
+        double rough = roughness_value(rec);
+        Vec3 n = shading_normal(rec);
         Vec3 v = (-r_in.direction).normalized();
         double n_dot_v = std::max(0.0, dot(n, v));
+        if (n_dot_v <= 0) return false;
 
         Vec3 up = std::fabs(n.x) > 0.9 ? Vec3(0, 1, 0) : Vec3(1, 0, 0);
         Vec3 tbn_t = cross(up, n).normalized();
@@ -217,58 +297,34 @@ public:
 
         Vec3 scattered_dir = (2 * dot(v, h) * h - v).normalized();
         double n_dot_l = std::max(0.0, dot(n, scattered_dir));
-        double n_dot_h = std::max(0.0, dot(n, h));
-        double v_dot_h = std::max(0.0, dot(v, h));
+        if (n_dot_l <= 0 || dot(rec.normal, scattered_dir) <= 0) return false;
 
-        if (n_dot_l <= 0 || n_dot_v <= 0 || v_dot_h <= 0) return false;
-
-        double a2 = alpha * alpha;
-        double denom_d = n_dot_h * n_dot_h * (a2 - 1) + 1;
-        double D = a2 / (pi * denom_d * denom_d);
-
-        auto g1 = [&](double ndx) {
-            double sq = std::sqrt(a2 + (1 - a2) * ndx * ndx);
-            return 2 * ndx / (ndx + sq);
-        };
-        double G = g1(n_dot_l) * g1(n_dot_v);
-
-        Color F0 = (1 - met) * Color(0.04, 0.04, 0.04) + met * base;
-        Color F = F0 + (Color(1, 1, 1) - F0) * std::pow(1 - v_dot_h, 5);
-
-        Color kD = (Color(1, 1, 1) - F) * (1 - met);
-        Color diffuse = kD * base / pi;
-        Color specular = F * (D * G) / (4 * n_dot_l * n_dot_v);
-        Color brdf = diffuse + specular;
-
-        double pdf = (D * n_dot_h) / (4 * v_dot_h);
-        if (pdf <= 0) return false;
-
-        attenuation = brdf * n_dot_l / pdf;
         scattered = Ray(rec.p, scattered_dir);
+        double pdf_val = pdf(r_in, scattered, rec);
+        if (pdf_val <= 0) return false;
+
+        attenuation = f(r_in, scattered, rec) * n_dot_l / pdf_val;
         return true;
     }
 
-    bool is_specular() const override { return false; }
-
     Color f(const Ray& r_in, const Ray& scattered, const HitRecord& rec) const override {
-        Color base = base_color(rec);
-        double met = std::clamp(metallic->value(rec.u, rec.v, rec.p).x, 0.0, 1.0);
-        double rough = std::clamp(roughness->value(rec.u, rec.v, rec.p).x, 0.001, 1.0);
-        double alpha = rough * rough;
-        double a2 = alpha * alpha;
-
-        Vec3 n = rec.normal;
+        Vec3 n = shading_normal(rec);
         Vec3 v = (-r_in.direction).normalized();
         Vec3 l = scattered.direction.normalized();
-        double n_dot_v = std::max(0.0, dot(n, v));
         double n_dot_l = std::max(0.0, dot(n, l));
-        if (n_dot_v <= 0 || n_dot_l <= 0) return Color(0, 0, 0);
+        double n_dot_v = std::max(0.0, dot(n, v));
+        if (n_dot_l <= 0 || n_dot_v <= 0) return Color(0, 0, 0);
 
         Vec3 h = (v + l).normalized();
         double n_dot_h = std::max(0.0, dot(n, h));
         double v_dot_h = std::max(0.0, dot(v, h));
         if (n_dot_h <= 0 || v_dot_h <= 0) return Color(0, 0, 0);
 
+        Color base = base_color(rec);
+        double met = metallic_value(rec);
+        double rough = roughness_value(rec);
+        double alpha = rough * rough;
+        double a2 = alpha * alpha;
         double denom_d = n_dot_h * n_dot_h * (a2 - 1) + 1;
         double D = a2 / (pi * denom_d * denom_d);
 
@@ -288,24 +344,50 @@ public:
     }
 
     double pdf(const Ray& r_in, const Ray& scattered, const HitRecord& rec) const override {
-        double rough = std::clamp(roughness->value(rec.u, rec.v, rec.p).x, 0.001, 1.0);
-        double alpha = rough * rough;
-        double a2 = alpha * alpha;
-
-        Vec3 n = rec.normal;
+        Vec3 n = shading_normal(rec);
         Vec3 v = (-r_in.direction).normalized();
         Vec3 l = scattered.direction.normalized();
-        double n_dot_l = std::max(0.0, dot(n, l));
-        if (n_dot_l <= 0) return 0;
+        if (dot(n, l) <= 0 || dot(n, v) <= 0) return 0;
 
         Vec3 h = (v + l).normalized();
         double n_dot_h = std::max(0.0, dot(n, h));
         double v_dot_h = std::max(0.0, dot(v, h));
         if (n_dot_h <= 0 || v_dot_h <= 0) return 0;
 
+        double rough = roughness_value(rec);
+        double alpha = rough * rough;
+        double a2 = alpha * alpha;
         double denom_d = n_dot_h * n_dot_h * (a2 - 1) + 1;
         double D = a2 / (pi * denom_d * denom_d);
-        return (D * n_dot_h) / (4 * v_dot_h);
+        double pdf_val = (D * n_dot_h) / (4 * v_dot_h);
+        return pdf_val > 0 && std::isfinite(pdf_val) ? pdf_val : 0;
+    }
+
+    bool is_specular() const override { return false; }
+    bool is_alpha_masked() const override { return alpha_masked; }
+    double alpha_cutoff() const override { return cutoff; }
+
+private:
+    double metallic_value(const HitRecord& rec) const {
+        return std::clamp(metallic->value(rec.u, rec.v, rec.p).x, 0.0, 1.0);
+    }
+
+    double roughness_value(const HitRecord& rec) const {
+        double rough = roughness->value(rec.u, rec.v, rec.p).x;
+        return std::clamp(rough, 0.001, 1.0);
+    }
+
+    Vec3 shading_normal(const HitRecord& rec) const {
+        Vec3 n = rec.normal;
+        if (has_normal_map && rec.has_tangent) {
+            Color ns = normal->value(rec.u, rec.v, rec.p);
+            Vec3 tn = Vec3(2 * ns.x - 1, 2 * ns.y - 1, 2 * ns.z - 1).normalized();
+            Vec3 T = rec.tangent.normalized();
+            Vec3 B = cross(n, T).normalized();
+            n = (T * tn.x + B * tn.y + n * tn.z).normalized();
+            if (dot(n, rec.normal) < 0) n = -n;
+        }
+        return n;
     }
 };
 
@@ -313,12 +395,19 @@ public:
 class Emissive : public Material {
 public:
     Color emission;
+    std::shared_ptr<Texture> emission_texture;
 
     explicit Emissive(const Color& e) : emission(e) {}
+    Emissive(const Color& e, std::shared_ptr<Texture> texture)
+        : emission(e), emission_texture(std::move(texture)) {}
+
+    Color emitted(const HitRecord& rec) const override {
+        if (!emission_texture) return emission;
+        return emission * emission_texture->value(rec.u, rec.v, rec.p);
+    }
 
     Color base_color(const HitRecord& rec) const override {
-        (void)rec;
-        return emission;
+        return emitted(rec);
     }
 
     bool scatter(const Ray& r_in, const HitRecord& rec,
@@ -328,7 +417,7 @@ public:
         (void)rec;
         (void)scattered;
         (void)attenuation;
-        emission_out = emission;
+        emission_out = emitted(rec);
         return false;
     }
 

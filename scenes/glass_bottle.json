@@ -5,7 +5,8 @@
         "samples": 32,
         "max_depth": 32,
         "output": "glass_bottle.ppm",
-        "exposure": 1.5
+        "exposure": 1.15,
+        "firefly_clamp": 10.0
     },
     "camera": {
         "lookfrom": [4, 2.5, 4],
@@ -27,7 +28,7 @@
             "type": "mesh",
             "file": "../models/glb/glass.glb",
             "auto_fit": true,
-            "fit_size": 3.0,
+            "fit_size": 2.8,
             "fit_center": [0, 1.5, 0]
         }
     ]

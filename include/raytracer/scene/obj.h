@@ -9,10 +9,13 @@
 #include "raytracer/math/vec2.h"
 #include "raytracer/math/vec3.h"
 #include <algorithm>
+#include <cmath>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 struct ObjTriangleData {
@@ -31,18 +34,45 @@ struct LoadedTextureData {
     std::vector<unsigned char> encoded;
 };
 
+struct TextureTransform {
+    Vec2 scale = Vec2(1.0, 1.0);
+    Vec2 offset = Vec2(0.0, 0.0);
+    bool active = false;
+};
+
 struct LoadedMaterialData {
     std::string name;
+    bool use_pbr = false;
     Color albedo = Color(0.7, 0.7, 0.7);
     double metallic = 0.0;
     double roughness = 0.6;
     double alpha = 1.0;
     int base_color_texture = -1;
+    int metallic_roughness_texture = -1;
+    int normal_texture = -1;
+    int alpha_texture = -1;
+    int specular_texture = -1;
+    int shininess_texture = -1;
+    Color emissive = Color(0, 0, 0);
+    int emissive_texture = -1;
+    bool double_sided = false;
+    Color attenuation_color = Color(1, 1, 1);
+    double attenuation_distance = infinity;
     bool alpha_blend = false;       // alphaMode == "BLEND"
+    bool alpha_mask = false;        // alphaMode == "MASK"
+    double alpha_cutoff = 0.5;
     double transmission = 0.0;      // KHR_materials_transmission
+    int transmission_texture = -1;
+    double thickness_factor = 0.0;  // KHR_materials_volume
+    int thickness_texture = -1;
     double ior = 1.5;               // KHR_materials_ior (glTF default)
-    Color attenuation_color = Color(1.0, 1.0, 1.0);  // KHR_materials_volume
-    double attenuation_distance = 0.0;               // KHR_materials_volume (0 = no absorption)
+    // KHR_texture_transform per texture reference
+    TextureTransform base_color_transform;
+    TextureTransform metallic_roughness_transform;
+    TextureTransform normal_transform;
+    TextureTransform emissive_transform;
+    TextureTransform transmission_transform;
+    TextureTransform thickness_transform;
 };
 
 struct ObjMeshData {
@@ -56,6 +86,11 @@ struct ObjFaceIndex {
     int v = 0;
     int vt = 0;
     int vn = 0;
+};
+
+struct ParsedObjFace {
+    std::vector<ObjFaceIndex> vertices;
+    std::string material_name;
 };
 
 inline int resolve_obj_index(int index, size_t count) {
@@ -116,6 +151,139 @@ inline AABB compute_obj_bounds(const std::vector<Point3>& positions,
     return AABB(min_p, max_p);
 }
 
+inline std::filesystem::path resolve_obj_relative_path(const std::filesystem::path& base_dir,
+                                                       const std::string& asset_path) {
+    std::filesystem::path path(asset_path);
+    if (path.is_relative()) path = base_dir / path;
+    return path.lexically_normal();
+}
+
+inline std::string read_mtl_texture_path(std::istringstream& iss) {
+    std::string token;
+    std::string texture_name;
+    while (iss >> token) {
+        texture_name = token;
+    }
+    return texture_name;
+}
+
+inline int add_mtl_texture(ObjMeshData& mesh,
+                           const std::filesystem::path& mtl_dir,
+                           const std::string& texture_name) {
+    LoadedTextureData texture;
+    texture.name = texture_name;
+    texture.path = resolve_obj_relative_path(mtl_dir, texture_name).string();
+    int texture_index = static_cast<int>(mesh.textures.size());
+    mesh.textures.push_back(texture);
+    return texture_index;
+}
+
+inline double mtl_ns_to_roughness(double ns) {
+    ns = std::max(0.0, ns);
+    return std::clamp(std::sqrt(2.0 / (ns + 2.0)), 0.02, 1.0);
+}
+
+inline void set_loaded_alpha(LoadedMaterialData& material, double alpha) {
+    material.alpha = std::clamp(alpha, 0.0, 1.0);
+    if (material.alpha < 0.999) material.alpha_blend = true;
+}
+
+inline void load_obj_mtl_file(const std::filesystem::path& obj_dir,
+                              const std::string& mtl_name,
+                              ObjMeshData& mesh,
+                              std::unordered_map<std::string, int>& material_indices) {
+    std::filesystem::path mtl_path = resolve_obj_relative_path(obj_dir, mtl_name);
+    std::ifstream in(mtl_path);
+    if (!in) return;
+
+    std::filesystem::path mtl_dir = mtl_path.parent_path();
+    LoadedMaterialData* current = nullptr;
+    std::string line;
+    while (std::getline(in, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line.empty() || line[0] == '#') continue;
+
+        std::istringstream iss(line);
+        std::string tag;
+        iss >> tag;
+        if (tag == "newmtl") {
+            std::string name;
+            iss >> name;
+            if (name.empty()) {
+                current = nullptr;
+                continue;
+            }
+
+            LoadedMaterialData data;
+            data.name = name;
+            material_indices[name] = static_cast<int>(mesh.materials.size());
+            mesh.materials.push_back(data);
+            current = &mesh.materials.back();
+        } else if (tag == "Kd" && current) {
+            double r, g, b;
+            if (iss >> r >> g >> b) {
+                current->albedo = Color(r, g, b);
+            }
+        } else if (tag == "Ks" && current) {
+            double r, g, b;
+            if (iss >> r >> g >> b) {
+                current->metallic = std::max({current->metallic, r, g, b});
+            }
+        } else if (tag == "Ns" && current) {
+            double ns;
+            if (iss >> ns) current->roughness = mtl_ns_to_roughness(ns);
+        } else if (tag == "Ni" && current) {
+            double ni;
+            if (iss >> ni && ni > 0) current->ior = ni;
+        } else if (tag == "d" && current) {
+            double alpha;
+            if (iss >> alpha) set_loaded_alpha(*current, alpha);
+        } else if (tag == "Tr" && current) {
+            double transparency;
+            if (iss >> transparency) set_loaded_alpha(*current, 1.0 - transparency);
+        } else if (tag == "Ke" && current) {
+            double r, g, b;
+            if (iss >> r >> g >> b) {
+                current->emissive = Color(r, g, b);
+            }
+        } else if (tag == "map_Kd" && current) {
+            std::string texture_name = read_mtl_texture_path(iss);
+            if (!texture_name.empty()) {
+                current->base_color_texture = add_mtl_texture(mesh, mtl_dir, texture_name);
+            }
+        } else if (tag == "map_d" && current) {
+            std::string texture_name = read_mtl_texture_path(iss);
+            if (!texture_name.empty()) {
+                current->alpha_texture = add_mtl_texture(mesh, mtl_dir, texture_name);
+                current->alpha_blend = true;
+            }
+        } else if (tag == "map_Ks" && current) {
+            std::string texture_name = read_mtl_texture_path(iss);
+            if (!texture_name.empty()) {
+                current->specular_texture = add_mtl_texture(mesh, mtl_dir, texture_name);
+                current->use_pbr = true;
+            }
+        } else if (tag == "map_Ns" && current) {
+            std::string texture_name = read_mtl_texture_path(iss);
+            if (!texture_name.empty()) {
+                current->shininess_texture = add_mtl_texture(mesh, mtl_dir, texture_name);
+                current->use_pbr = true;
+            }
+        } else if (tag == "map_Ke" && current) {
+            std::string texture_name = read_mtl_texture_path(iss);
+            if (!texture_name.empty()) {
+                current->emissive_texture = add_mtl_texture(mesh, mtl_dir, texture_name);
+            }
+        } else if ((tag == "map_Bump" || tag == "bump" || tag == "norm" || tag == "map_Kn") && current) {
+            std::string texture_name = read_mtl_texture_path(iss);
+            if (!texture_name.empty()) {
+                current->normal_texture = add_mtl_texture(mesh, mtl_dir, texture_name);
+                current->use_pbr = true;
+            }
+        }
+    }
+}
+
 inline Vec3 generated_obj_normal(const std::vector<Vec3>& smooth_normals,
                                  const ObjFaceIndex& idx) {
     int vertex = resolve_obj_index(idx.v, smooth_normals.size());
@@ -133,7 +301,9 @@ inline ObjMeshData load_obj_mesh(const std::string& path,
     std::vector<Point3> positions;
     std::vector<Vec2> texcoords;
     std::vector<Vec3> normals;
-    std::vector<std::vector<ObjFaceIndex>> faces;
+    std::vector<ParsedObjFace> faces;
+    std::vector<std::string> mtllibs;
+    std::string current_material;
     std::string line;
 
     while (std::getline(in, line)) {
@@ -154,23 +324,35 @@ inline ObjMeshData load_obj_mesh(const std::string& path,
             double u, v;
             iss >> u >> v;
             texcoords.push_back(Vec2(u, v));
+        } else if (tag == "mtllib") {
+            std::string mtl_name;
+            while (iss >> mtl_name) mtllibs.push_back(mtl_name);
+        } else if (tag == "usemtl") {
+            iss >> current_material;
         } else if (tag == "f") {
-            std::vector<ObjFaceIndex> face;
+            ParsedObjFace face;
+            face.material_name = current_material;
             std::string token;
-            while (iss >> token) face.push_back(parse_obj_face_index(token));
-            if (face.size() >= 3) faces.push_back(face);
+            while (iss >> token) face.vertices.push_back(parse_obj_face_index(token));
+            if (face.vertices.size() >= 3) faces.push_back(face);
         }
     }
 
     ObjMeshData mesh;
+    std::unordered_map<std::string, int> material_indices;
+    std::filesystem::path obj_dir = std::filesystem::absolute(path).parent_path();
+    for (const std::string& mtl_name : mtllibs) {
+        load_obj_mtl_file(obj_dir, mtl_name, mesh, material_indices);
+    }
+
     mesh.bounds = compute_obj_bounds(positions, scale, translate);
 
     std::vector<Vec3> smooth_normals(positions.size(), Vec3(0, 0, 0));
-    for (const std::vector<ObjFaceIndex>& face : faces) {
-        for (size_t i = 1; i + 1 < face.size(); i++) {
-            const ObjFaceIndex& idx0 = face[0];
-            const ObjFaceIndex& idx1 = face[i];
-            const ObjFaceIndex& idx2 = face[i + 1];
+    for (const ParsedObjFace& face : faces) {
+        for (size_t i = 1; i + 1 < face.vertices.size(); i++) {
+            const ObjFaceIndex& idx0 = face.vertices[0];
+            const ObjFaceIndex& idx1 = face.vertices[i];
+            const ObjFaceIndex& idx2 = face.vertices[i + 1];
             int i0 = resolve_obj_index(idx0.v, positions.size());
             int i1 = resolve_obj_index(idx1.v, positions.size());
             int i2 = resolve_obj_index(idx2.v, positions.size());
@@ -186,12 +368,16 @@ inline ObjMeshData load_obj_mesh(const std::string& path,
         if (n.length_squared() > 1e-12) n = n.normalized();
     }
 
-    for (const std::vector<ObjFaceIndex>& face : faces) {
-        for (size_t i = 1; i + 1 < face.size(); i++) {
+    for (const ParsedObjFace& face : faces) {
+        for (size_t i = 1; i + 1 < face.vertices.size(); i++) {
             ObjTriangleData tri;
-            const ObjFaceIndex idx0 = face[0];
-            const ObjFaceIndex idx1 = face[i];
-            const ObjFaceIndex idx2 = face[i + 1];
+            const ObjFaceIndex idx0 = face.vertices[0];
+            const ObjFaceIndex idx1 = face.vertices[i];
+            const ObjFaceIndex idx2 = face.vertices[i + 1];
+            auto material_it = material_indices.find(face.material_name);
+            if (material_it != material_indices.end()) {
+                tri.material_index = material_it->second;
+            }
 
             tri.v0 = transform_obj_point(
                 positions.at(resolve_obj_index(idx0.v, positions.size())), scale, translate);

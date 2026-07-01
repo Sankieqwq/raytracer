@@ -4,6 +4,8 @@ build/
 # Render output
 *.ppm
 *.png
+!tests/golden/images/*.png
+!textures/mtl_test.ppm
 *.log
 *.rgba32f
 
@@ -16,6 +18,8 @@ debug/
 /raytracer_server
 __pycache__/
 *.pyc
+
+reports/
 
 # IDE
 .vscode/

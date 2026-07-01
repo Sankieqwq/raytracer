@@ -55,6 +55,39 @@ public:
     }
 };
 
+class TextureChannel : public Texture {
+public:
+    std::shared_ptr<Texture> texture;
+    int channel = 0;
+
+    TextureChannel(std::shared_ptr<Texture> texture, int channel)
+        : texture(std::move(texture)), channel(std::clamp(channel, 0, 2)) {}
+
+    Color value(double u, double v, const Point3& p) const override {
+        Color c = texture->value(u, v, p);
+        double scalar = channel == 0 ? c.x : (channel == 1 ? c.y : c.z);
+        return Color(scalar, 0, 0);
+    }
+};
+
+// Applies a 2D UV transform (scale + offset) to a wrapped texture.
+// Implements glTF KHR_texture_transform: uv = (uv * scale) + offset.
+class TransformedTexture : public Texture {
+public:
+    std::shared_ptr<Texture> texture;
+    Vec2 scale = Vec2(1.0, 1.0);
+    Vec2 offset = Vec2(0.0, 0.0);
+
+    TransformedTexture(std::shared_ptr<Texture> texture, const Vec2& scale, const Vec2& offset)
+        : texture(std::move(texture)), scale(scale), offset(offset) {}
+
+    Color value(double u, double v, const Point3& p) const override {
+        double tu = u * scale.x + offset.x;
+        double tv = v * scale.y + offset.y;
+        return texture->value(tu, tv, p);
+    }
+};
+
 class ImageTexture : public Texture {
 public:
     int width = 0;

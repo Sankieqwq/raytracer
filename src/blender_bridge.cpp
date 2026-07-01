@@ -92,6 +92,10 @@ int main(int argc, char* argv[]) {
     if (args.samples_override > 0) scene.samples = args.samples_override;
     if (args.max_depth_override > 0) scene.max_depth = args.max_depth_override;
 
+    const char* environment_type = "gradient";
+    if (scene.environment.type == EnvironmentType::Solid) environment_type = "solid";
+    if (scene.environment.type == EnvironmentType::Texture) environment_type = "texture";
+
     std::cerr << "INFO scene=" << args.scene_path
               << " image=" << scene.width << "x" << scene.height
               << " samples=" << scene.samples
@@ -100,7 +104,7 @@ int main(int argc, char* argv[]) {
               << " lights=" << scene.lights.size()
               << " ambient=(" << scene.ambient_light.x << ","
               << scene.ambient_light.y << "," << scene.ambient_light.z << ")"
-              << " background=" << (scene.background_type == BackgroundType::Sky ? "sky" : "solid")
+              << " environment=" << environment_type
               << "\n";
 
     RenderCallbacks callbacks;

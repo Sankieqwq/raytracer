@@ -1,0 +1,39 @@
+{
+    "image": {
+        "width": 128,
+        "height": 90,
+        "samples": 8,
+        "max_depth": 16,
+        "output": "/tmp/golden_obj_mtl_test.png",
+        "tone_map": "aces",
+        "exposure": 1.0,
+        "seed": 56789
+    },
+    "camera": {
+        "lookfrom": [0.5, 0.5, 2.0],
+        "lookat": [0.45, 0.45, 0.0],
+        "vfov": 45
+    },
+    "lighting": {
+        "ambient": [0.1, 0.1, 0.1]
+    },
+    "lights": [
+        {
+            "type": "directional",
+            "direction": [-0.3, -0.8, -0.4],
+            "color": [1.0, 0.96, 0.9],
+            "intensity": 1.0
+        }
+    ],
+    "objects": [
+        {
+            "type": "mesh",
+            "file": "../../../models/obj/mtl_test.obj",
+            "override_material": false,
+            "material": {
+                "type": "lambertian",
+                "albedo": [0.7, 0.7, 0.7]
+            }
+        }
+    ]
+}

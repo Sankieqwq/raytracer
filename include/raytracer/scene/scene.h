@@ -12,6 +12,7 @@
 #include "raytracer/math/mat4.h"
 #include "raytracer/math/vec3.h"
 #include "raytracer/render/camera.h"
+#include "raytracer/render/image.h"
 #include "raytracer/scene/glb.h"
 #include "raytracer/scene/json.h"
 #include "raytracer/scene/obj.h"
@@ -26,20 +27,46 @@
 
 enum class LightType {
     Point,
-    Directional
-};
-
-enum class BackgroundType {
-    Solid,
-    Sky
+    Directional,
+    Spot,
+    Sphere,
+    Rect,
+    Disk
 };
 
 struct Light {
     LightType type = LightType::Directional;
     Point3 position;
     Vec3 direction = Vec3(0, -1, -1);
+    Vec3 u = Vec3(1, 0, 0);
+    Vec3 v = Vec3(0, 0, 1);
     Color color = Color(1, 1, 1);
     double intensity = 1.0;
+    double radius = 0.25;
+    double angle = 30.0;
+    double soft_angle = 0.0;
+
+    double area() const {
+        if (type == LightType::Sphere) return 4.0 * pi * radius * radius;
+        if (type == LightType::Rect) return cross(u, v).length();
+        if (type == LightType::Disk) return pi * radius * radius;
+        return 0.0;
+    }
+};
+
+enum class EnvironmentType {
+    Gradient,
+    Solid,
+    Texture
+};
+
+struct Environment {
+    EnvironmentType type = EnvironmentType::Gradient;
+    Color bottom = Color(1.0, 1.0, 1.0);
+    Color top = Color(0.5, 0.7, 1.0);
+    Color color = Color(1.0, 1.0, 1.0);
+    double intensity = 1.0;
+    std::shared_ptr<Texture> texture;
 };
 
 struct EmissiveObject {
@@ -53,7 +80,9 @@ struct Scene {
     int samples = 16;
     int max_depth = 32;
     std::string output = "out.ppm";
-    double exposure = 1.0;
+    ImageOutputOptions output_options;
+    unsigned int seed = 0;
+    bool has_seed = false;
 
     std::unique_ptr<Camera> camera;
     HittableList primitives;
@@ -62,13 +91,15 @@ struct Scene {
     bool has_mesh_bounds = false;
     AABB mesh_bounds;
     Color ambient_light = Color(0.04, 0.04, 0.04);
-    BackgroundType background_type = BackgroundType::Sky;
-    Color background_color = Color(0, 0, 0);
+    Environment environment;
+    double firefly_clamp = infinity;
     std::vector<Light> lights;
     std::vector<EmissiveObject> emissive_objects;
+    double emissive_total_area = 0.0;
 
     std::vector<std::unique_ptr<Material>> materials;
     std::vector<std::unique_ptr<Hittable>> objects;
+    std::vector<std::unique_ptr<Hittable>> emissive_samplers;
 };
 
 struct SceneLoadOptions {
@@ -138,6 +169,78 @@ inline std::shared_ptr<Texture> load_texture_from_path(const std::filesystem::pa
     return std::make_shared<ImageTexture>(resolve_asset_path(base_dir, texture_path));
 }
 
+inline std::string lower_ascii(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return value;
+}
+
+inline Vec3 safe_normalized(const Vec3& v, const Vec3& fallback) {
+    double len2 = v.length_squared();
+    if (len2 <= 1e-16) return fallback;
+    return v / std::sqrt(len2);
+}
+
+inline Color clamp_radiance(const Color& c, double max_channel) {
+    if (!std::isfinite(max_channel) || max_channel <= 0) return c;
+    double peak = std::max(c.x, std::max(c.y, c.z));
+    if (peak <= max_channel || peak <= 0) return c;
+    return c * (max_channel / peak);
+}
+
+inline Environment parse_environment(const JsonValue& env_json,
+                                     const std::filesystem::path& base_dir) {
+    Environment env;
+
+    if (env_json.isArray() && env_json.arrVal.size() >= 3) {
+        env.type = EnvironmentType::Solid;
+        env.color = to_vec3(env_json);
+        return env;
+    }
+
+    std::string type = env_json.has("type") ? lower_ascii(env_json.at("type").strVal) : "gradient";
+    if (type == "solid" || type == "color") {
+        env.type = EnvironmentType::Solid;
+        env.color = env_json.has("color") ? to_vec3(env_json.at("color")) : Color(1.0, 1.0, 1.0);
+    } else if (type == "texture" || type == "image" || type == "hdr") {
+        env.type = EnvironmentType::Texture;
+        std::string path;
+        if (env_json.has("texture")) path = env_json.at("texture").strVal;
+        else if (env_json.has("path")) path = env_json.at("path").strVal;
+        else if (env_json.has("file")) path = env_json.at("file").strVal;
+        if (path.empty()) throw std::runtime_error("environment texture requires texture/path/file");
+        env.texture = load_texture_from_path(base_dir, path);
+    } else if (type == "gradient" || type == "sky") {
+        env.type = EnvironmentType::Gradient;
+        if (env_json.has("top")) env.top = to_vec3(env_json.at("top"));
+        if (env_json.has("bottom")) env.bottom = to_vec3(env_json.at("bottom"));
+        if (env_json.has("color")) {
+            env.bottom = to_vec3(env_json.at("color"));
+            env.top = env.bottom;
+        }
+    } else {
+        throw std::runtime_error("Unknown environment type: " + type);
+    }
+
+    if (env_json.has("intensity")) env.intensity = env_json.at("intensity").numVal;
+    return env;
+}
+
+inline Color scene_background(const Scene& scene, const Ray& ray) {
+    const Environment& env = scene.environment;
+    if (env.type == EnvironmentType::Solid) return env.color * env.intensity;
+
+    Vec3 unit_dir = safe_normalized(ray.direction, Vec3(0, 1, 0));
+    if (env.type == EnvironmentType::Texture && env.texture) {
+        double u = 0.5 + std::atan2(unit_dir.z, unit_dir.x) / (2.0 * pi);
+        double v = 0.5 - std::asin(std::clamp(unit_dir.y, -1.0, 1.0)) / pi;
+        return env.texture->value(u, v, ray.origin + unit_dir) * env.intensity;
+    }
+
+    double t = 0.5 * (unit_dir.y + 1.0);
+    return ((1 - t) * env.bottom + t * env.top) * env.intensity;
+}
+
 inline std::shared_ptr<Texture> material_texture_or_color(const JsonValue& m,
                                                           const std::filesystem::path& base_dir,
                                                           const Color& fallback) {
@@ -194,10 +297,17 @@ inline Material* parse_material(const JsonValue& m,
         mat = std::make_unique<Metal>(material_texture_or_color(m, base_dir, albedo), fuzz);
     } else if (type == "dielectric") {
         Color alb = m.has("albedo") ? to_vec3(m.at("albedo")) : Color(1.0, 1.0, 1.0);
-        auto die = std::make_unique<Dielectric>(m.at("ior").numVal, alb);
-        if (m.has("attenuation_color")) die->attenuation_color = to_vec3(m.at("attenuation_color"));
-        if (m.has("attenuation_distance")) die->attenuation_distance = m.at("attenuation_distance").numVal;
-        mat = std::move(die);
+        auto dielectric = std::make_unique<Dielectric>(m.at("ior").numVal, alb);
+        if (m.has("roughness")) {
+            dielectric->roughness = std::clamp(m.at("roughness").numVal, 0.0, 1.0);
+        }
+        if (m.has("attenuation_color")) {
+            dielectric->attenuation_color = to_vec3(m.at("attenuation_color"));
+        }
+        if (m.has("attenuation_distance")) {
+            dielectric->attenuation_distance = m.at("attenuation_distance").numVal;
+        }
+        mat = std::move(dielectric);
     } else if (type == "pbr") {
         auto albedo_tex = parse_texture_color(m, "albedo", Color(0.8, 0.8, 0.8), base_dir);
         auto metallic_tex = parse_texture_scalar(m, "metallic", 0.0, base_dir);
@@ -245,37 +355,129 @@ inline Material* ensure_material(const JsonValue& obj,
     return parse_material(fallback, scene, base_dir);
 }
 
+inline std::shared_ptr<Texture> apply_texture_transform(std::shared_ptr<Texture> texture,
+                                                       const TextureTransform& transform) {
+    if (!transform.active) return texture;
+    return std::make_shared<TransformedTexture>(std::move(texture), transform.scale, transform.offset);
+}
+
+inline std::shared_ptr<Texture> make_loaded_texture_by_index(const ObjMeshData& mesh,
+                                                             int texture_index,
+                                                             const TextureTransform& transform = {}) {
+    if (texture_index >= 0 &&
+        static_cast<size_t>(texture_index) < mesh.textures.size()) {
+        const LoadedTextureData& texture = mesh.textures[texture_index];
+        std::shared_ptr<Texture> tex;
+        if (!texture.encoded.empty()) {
+            tex = std::make_shared<ImageTexture>(texture.encoded, texture.mime_type);
+        } else if (!texture.path.empty()) {
+            tex = std::make_shared<ImageTexture>(texture.path);
+        } else {
+            tex = make_solid_texture(Color(1, 1, 1));
+        }
+        return apply_texture_transform(tex, transform);
+    }
+    return make_solid_texture(Color(1, 1, 1));
+}
+
 inline std::shared_ptr<Texture> make_loaded_texture(const ObjMeshData& mesh,
                                                     const LoadedMaterialData& data) {
-    if (data.base_color_texture >= 0 &&
-        static_cast<size_t>(data.base_color_texture) < mesh.textures.size()) {
-        const LoadedTextureData& texture = mesh.textures[data.base_color_texture];
-        if (!texture.encoded.empty()) {
-            return std::make_shared<TintedTexture>(
-                std::make_shared<ImageTexture>(texture.encoded, texture.mime_type), data.albedo);
-        }
-        if (!texture.path.empty()) {
-            return std::make_shared<TintedTexture>(
-                std::make_shared<ImageTexture>(texture.path), data.albedo);
-        }
+    if (data.base_color_texture >= 0) {
+        return std::make_shared<TintedTexture>(
+            make_loaded_texture_by_index(mesh, data.base_color_texture, data.base_color_transform), data.albedo);
     }
     return make_solid_texture(data.albedo);
+}
+
+inline std::shared_ptr<Texture> make_loaded_scalar_texture(const ObjMeshData& mesh,
+                                                           int texture_index,
+                                                           int channel,
+                                                           double fallback,
+                                                           const TextureTransform& transform = {}) {
+    if (texture_index >= 0 &&
+        static_cast<size_t>(texture_index) < mesh.textures.size()) {
+        return std::make_shared<TextureChannel>(
+            make_loaded_texture_by_index(mesh, texture_index, transform), channel);
+    }
+    return make_solid_texture(Color(fallback, 0, 0));
 }
 
 inline Material* add_loaded_material(const ObjMeshData& mesh,
                                       const LoadedMaterialData& data,
                                       Scene& scene) {
     std::unique_ptr<Material> mat;
-    if (data.transmission > 0.5 || data.alpha_blend) {
-        auto die = std::make_unique<Dielectric>(data.ior, make_loaded_texture(mesh, data));
-        die->attenuation_color = data.attenuation_color;
-        die->attenuation_distance = data.attenuation_distance;
-        mat = std::move(die);
+    bool has_emission = data.emissive.length_squared() > 1e-12;
+    if (data.transmission > 0.5 || data.transmission_texture >= 0 || data.alpha_blend) {
+        auto dielectric = std::make_unique<Dielectric>(data.ior, make_loaded_texture(mesh, data));
+        dielectric->attenuation_color = data.attenuation_color;
+        dielectric->attenuation_distance = data.attenuation_distance;
+        // Only apply GLB roughness when KHR_materials_transmission is
+        // present (intentional glass material with rough transmission).
+        // For alphaMode:BLEND-only assets like glass.glb, the glTF default
+        // roughness of 1.0 would make the glass a blurry mess; keeping
+        // roughness=0 matches the expected smooth-glass appearance and the
+        // pre-transmission-rewrite baseline.
+        if (data.transmission > 0.0 || data.transmission_texture >= 0) {
+            dielectric->roughness = std::clamp(data.roughness, 0.0, 1.0);
+        }
+        dielectric->transmission = std::clamp(data.transmission > 0.0 ? data.transmission : 1.0, 0.0, 1.0);
+        dielectric->double_sided = data.double_sided;
+        if (data.transmission_texture >= 0) {
+            dielectric->transmission_texture = make_loaded_scalar_texture(mesh, data.transmission_texture, 0, dielectric->transmission, data.transmission_transform);
+        }
+        if (std::isfinite(dielectric->attenuation_distance) && data.thickness_factor > 1e-6) {
+            dielectric->attenuation_distance /= data.thickness_factor;
+        }
+        if (data.thickness_texture >= 0) {
+            auto thickness_tex = make_loaded_scalar_texture(mesh, data.thickness_texture, 0, data.thickness_factor, data.thickness_transform);
+            (void)thickness_tex;  // stored on dielectric if per-pixel thickness supported later
+        }
+        mat = std::move(dielectric);
+    } else if (data.use_pbr) {
+        auto pbr = std::make_unique<PBR>(make_loaded_texture(mesh, data), data.metallic, data.roughness);
+        if (data.metallic_roughness_texture >= 0) {
+            pbr->roughness = make_loaded_scalar_texture(mesh, data.metallic_roughness_texture, 1, data.roughness, data.metallic_roughness_transform);
+            pbr->metallic = make_loaded_scalar_texture(mesh, data.metallic_roughness_texture, 2, data.metallic, data.metallic_roughness_transform);
+        }
+        // MTL map_Ks drives metallic, map_Ns drives roughness (inverted).
+        if (data.specular_texture >= 0) {
+            pbr->metallic = make_loaded_scalar_texture(mesh, data.specular_texture, 0, data.metallic);
+        }
+        if (data.shininess_texture >= 0) {
+            pbr->roughness = make_loaded_scalar_texture(mesh, data.shininess_texture, 0, data.roughness);
+        }
+        if (data.normal_texture >= 0) {
+            pbr->normal = make_loaded_texture_by_index(mesh, data.normal_texture, data.normal_transform);
+            pbr->has_normal_map = true;
+        }
+        if (has_emission) {
+            pbr->emission = data.emissive;
+            if (data.emissive_texture >= 0) {
+                pbr->emission_texture = make_loaded_texture_by_index(mesh, data.emissive_texture, data.emissive_transform);
+            }
+        }
+        if (data.alpha_mask) {
+            pbr->alpha_masked = true;
+            pbr->cutoff = data.alpha_cutoff;
+        }
+        mat = std::move(pbr);
+    } else if (has_emission) {
+        if (data.emissive_texture >= 0) {
+            mat = std::make_unique<Emissive>(
+                data.emissive, make_loaded_texture_by_index(mesh, data.emissive_texture, data.emissive_transform));
+        } else {
+            mat = std::make_unique<Emissive>(data.emissive);
+        }
     } else if (data.metallic > 0.5) {
         double fuzz = std::clamp(data.roughness, 0.0, 1.0);
         mat = std::make_unique<Metal>(make_loaded_texture(mesh, data), fuzz);
     } else {
-        mat = std::make_unique<Lambertian>(make_loaded_texture(mesh, data));
+        auto lambert = std::make_unique<Lambertian>(make_loaded_texture(mesh, data));
+        if (data.alpha_mask) {
+            lambert->alpha_masked = true;
+            lambert->cutoff = data.alpha_cutoff;
+        }
+        mat = std::move(lambert);
     }
 
     Material* ptr = mat.get();
@@ -283,15 +485,59 @@ inline Material* add_loaded_material(const ObjMeshData& mesh,
     return ptr;
 }
 
+inline Vec3 tangent_for_direction(const Vec3& direction) {
+    Vec3 n = safe_normalized(direction, Vec3(0, -1, 0));
+    Vec3 up = std::fabs(n.y) < 0.99 ? Vec3(0, 1, 0) : Vec3(1, 0, 0);
+    return safe_normalized(cross(up, n), Vec3(1, 0, 0));
+}
+
 inline Light parse_light(const JsonValue& light_json) {
     Light light;
-    std::string type = light_json.has("type") ? light_json.at("type").strVal : "directional";
+    std::string type = light_json.has("type") ? lower_ascii(light_json.at("type").strVal) : "directional";
     if (type == "point") {
         light.type = LightType::Point;
         light.position = light_json.has("position") ? to_vec3(light_json.at("position")) : Point3(0, 3, 4);
     } else if (type == "directional") {
         light.type = LightType::Directional;
-        light.direction = light_json.has("direction") ? to_vec3(light_json.at("direction")) : Vec3(-1, -1, -1);
+        light.direction = safe_normalized(
+            light_json.has("direction") ? to_vec3(light_json.at("direction")) : Vec3(-1, -1, -1),
+            Vec3(-1, -1, -1).normalized());
+    } else if (type == "spot") {
+        light.type = LightType::Spot;
+        light.position = light_json.has("position") ? to_vec3(light_json.at("position")) : Point3(0, 3, 4);
+        light.direction = safe_normalized(
+            light_json.has("direction") ? to_vec3(light_json.at("direction")) : Vec3(0, -1, 0),
+            Vec3(0, -1, 0));
+        light.angle = light_json.has("angle") ? light_json.at("angle").numVal : 30.0;
+        light.soft_angle = light_json.has("soft_angle") ? light_json.at("soft_angle").numVal : 0.0;
+    } else if (type == "sphere") {
+        light.type = LightType::Sphere;
+        light.position = light_json.has("position") ? to_vec3(light_json.at("position")) : Point3(0, 3, 4);
+        light.radius = light_json.has("radius") ? light_json.at("radius").numVal : 0.25;
+    } else if (type == "rect" || type == "rectangle" || type == "quad" || type == "softbox") {
+        light.type = LightType::Rect;
+        light.position = light_json.has("position") ? to_vec3(light_json.at("position")) : Point3(0, 3, 0);
+        light.direction = safe_normalized(
+            light_json.has("direction") ? to_vec3(light_json.at("direction")) : Vec3(0, -1, 0),
+            Vec3(0, -1, 0));
+        if (light_json.has("u") && light_json.has("v")) {
+            light.u = to_vec3(light_json.at("u"));
+            light.v = to_vec3(light_json.at("v"));
+        } else {
+            double width = light_json.has("width") ? light_json.at("width").numVal : 1.0;
+            double height = light_json.has("height") ? light_json.at("height").numVal : width;
+            Vec3 tangent = tangent_for_direction(light.direction);
+            Vec3 bitangent = safe_normalized(cross(light.direction, tangent), Vec3(0, 0, 1));
+            light.u = width * tangent;
+            light.v = height * bitangent;
+        }
+    } else if (type == "disk" || type == "circle") {
+        light.type = LightType::Disk;
+        light.position = light_json.has("position") ? to_vec3(light_json.at("position")) : Point3(0, 3, 0);
+        light.direction = safe_normalized(
+            light_json.has("direction") ? to_vec3(light_json.at("direction")) : Vec3(0, -1, 0),
+            Vec3(0, -1, 0));
+        light.radius = light_json.has("radius") ? light_json.at("radius").numVal : 0.5;
     } else {
         throw std::runtime_error("Unknown light type: " + type);
     }
@@ -306,21 +552,68 @@ inline std::vector<Light> default_lights() {
     sun.type = LightType::Directional;
     sun.direction = Vec3(-1, -1.5, -1).normalized();
     sun.color = Color(1.0, 0.96, 0.9);
-    sun.intensity = 0.9 * pi;
+    sun.intensity = 0.9;
 
     Light fill;
     fill.type = LightType::Point;
     fill.position = Point3(3.0, 4.0, 5.0);
     fill.color = Color(0.8, 0.9, 1.0);
-    fill.intensity = 5.0 * pi;
+    fill.intensity = 5.0;
 
     return {sun, fill};
 }
 
-inline BackgroundType parse_background_type(const std::string& type) {
-    if (type == "sky") return BackgroundType::Sky;
-    if (type == "solid" || type == "color" || type == "black") return BackgroundType::Solid;
-    throw std::runtime_error("unknown background type: " + type);
+inline std::vector<Light> studio_softbox_lights() {
+    Light key;
+    key.type = LightType::Rect;
+    key.position = Point3(0.0, 4.0, 3.0);
+    key.direction = Vec3(0, -1, -0.8).normalized();
+    key.u = Vec3(3.0, 0, 0);
+    key.v = Vec3(0, 0, 2.0);
+    key.color = Color(1.0, 0.96, 0.9);
+    key.intensity = 20.0;
+
+    Light rim;
+    rim.type = LightType::Directional;
+    rim.direction = Vec3(1.2, -1.0, 0.6).normalized();
+    rim.color = Color(0.75, 0.85, 1.0);
+    rim.intensity = 0.35;
+
+    return {key, rim};
+}
+
+inline std::string scene_preset_name(const JsonValue& root) {
+    if (root.has("scene") && root.at("scene").has("preset")) {
+        return lower_ascii(root.at("scene").at("preset").strVal);
+    }
+    if (root.has("preset")) return lower_ascii(root.at("preset").strVal);
+    return "";
+}
+
+inline std::vector<Light> lights_for_preset(const std::string& preset) {
+    if (preset == "studio_softbox" ||
+        preset == "material_studio" ||
+        preset == "material_test_studio" ||
+        preset == "studio") {
+        return studio_softbox_lights();
+    }
+    if (preset.empty()) return default_lights();
+    throw std::runtime_error("Unknown scene preset: " + preset);
+}
+
+inline void parse_render_settings(const JsonValue& img, Scene& scene) {
+    if (img.has("width"))     scene.width     = static_cast<int>(img.at("width").numVal);
+    if (img.has("height"))    scene.height    = static_cast<int>(img.at("height").numVal);
+    if (img.has("samples"))   scene.samples   = static_cast<int>(img.at("samples").numVal);
+    if (img.has("max_depth")) scene.max_depth = static_cast<int>(img.at("max_depth").numVal);
+    if (img.has("output"))    scene.output    = img.at("output").strVal;
+    if (img.has("exposure"))  scene.output_options.exposure = img.at("exposure").numVal;
+    if (img.has("tone_map"))  scene.output_options.tone_map = parse_tone_map_mode(img.at("tone_map").strVal);
+    if (img.has("firefly_clamp")) scene.firefly_clamp = img.at("firefly_clamp").numVal;
+    if (img.has("seed")) {
+        scene.seed = static_cast<unsigned int>(img.at("seed").numVal);
+        scene.has_seed = true;
+    }
 }
 
 struct LightSample {
@@ -330,6 +623,99 @@ struct LightSample {
     double distance = infinity;
     bool is_delta = true;
 };
+
+inline Point3 sample_light_point(const Light& light, double r1, double r2) {
+    if (light.type == LightType::Sphere) {
+        double z = 1.0 - 2.0 * r1;
+        double phi = 2.0 * pi * r2;
+        double xy = std::sqrt(std::max(0.0, 1.0 - z * z));
+        return light.position + light.radius * Vec3(std::cos(phi) * xy, z, std::sin(phi) * xy);
+    }
+    if (light.type == LightType::Rect) {
+        return light.position + (r1 - 0.5) * light.u + (r2 - 0.5) * light.v;
+    }
+    if (light.type == LightType::Disk) {
+        // Uniform area sampling on a disk (concentric to reduce variance).
+        double r = std::sqrt(std::clamp(r1, 0.0, 1.0));
+        double phi = 2.0 * pi * r2;
+        Vec3 local(r * std::cos(phi), r * std::sin(phi), 0.0);
+        // Build an orthonormal basis around the disk's direction, using u/v if
+        // they are valid, otherwise deriving them from direction.
+        Vec3 n = safe_normalized(light.direction, Vec3(0, -1, 0));
+        Vec3 axis = std::fabs(n.x) > 0.9 ? Vec3(0, 1, 0) : Vec3(1, 0, 0);
+        Vec3 t = cross(n, axis).normalized();
+        Vec3 b = cross(n, t);
+        return light.position + light.radius * (t * local.x + b * local.y);
+    }
+    return light.position;
+}
+
+inline double spot_cone_factor(const Light& light, const Vec3& from_light_dir) {
+    if (light.type != LightType::Spot) return 1.0;
+    Vec3 axis = safe_normalized(light.direction, Vec3(0, -1, 0));
+    double cos_theta = dot(safe_normalized(from_light_dir, axis), axis);
+    double outer = std::cos(degrees_to_radians(std::max(0.0, light.angle)));
+    if (cos_theta < outer) return 0.0;
+    if (light.soft_angle <= 0.0) return 1.0;
+
+    double inner_angle = std::max(0.0, light.angle - light.soft_angle);
+    double inner = std::cos(degrees_to_radians(inner_angle));
+    double denom = inner - outer;
+    if (std::fabs(denom) <= 1e-8) return 1.0;
+    return std::clamp((cos_theta - outer) / denom, 0.0, 1.0);
+}
+
+inline LightSample sample_scene_light(const Light& light,
+                                      const Point3& p,
+                                      double r1 = 0.5,
+                                      double r2 = 0.5) {
+    LightSample s;
+    s.is_delta = light.type == LightType::Point ||
+                 light.type == LightType::Directional ||
+                 light.type == LightType::Spot;
+
+    if (light.type == LightType::Directional) {
+        s.direction = safe_normalized(-light.direction, Vec3(0, 1, 0));
+        s.distance = infinity;
+        s.radiance = light.color * light.intensity;
+        return s;
+    }
+
+    Point3 light_point = sample_light_point(light, r1, r2);
+    Vec3 to_light = light_point - p;
+    double dist2 = to_light.length_squared();
+    if (dist2 < 1e-8) return LightSample{};
+
+    double dist = std::sqrt(dist2);
+    s.direction = to_light / dist;
+    s.distance = dist;
+
+    double attenuation = 1.0 / dist2;
+    if (light.type == LightType::Spot) {
+        attenuation *= spot_cone_factor(light, -s.direction);
+    } else if (light.type == LightType::Sphere) {
+        attenuation *= std::max(light.area(), 1e-8);
+        s.is_delta = false;
+    } else if (light.type == LightType::Rect) {
+        Vec3 normal = safe_normalized(cross(light.u, light.v), -light.direction);
+        double facing = dot(safe_normalized(light.direction, -normal), -s.direction);
+        double cos_light = std::max(0.0, std::fabs(dot(normal, -s.direction)));
+        if (facing <= 0.0 || cos_light <= 0.0) return LightSample{};
+        attenuation *= std::max(light.area(), 1e-8) * cos_light;
+        s.is_delta = false;
+    } else if (light.type == LightType::Disk) {
+        Vec3 n = safe_normalized(light.direction, Vec3(0, -1, 0));
+        double cos_light = std::max(0.0, dot(n, -s.direction));
+        double facing = dot(safe_normalized(light.direction, -n), -s.direction);
+        if (facing <= 0.0 || cos_light <= 0.0) return LightSample{};
+        attenuation *= std::max(light.area(), 1e-8) * cos_light;
+        s.is_delta = false;
+    }
+
+    if (attenuation <= 0.0) return LightSample{};
+    s.radiance = light.color * (light.intensity * attenuation);
+    return s;
+}
 
 inline LightSample sample_any_light(const Scene& scene, const Point3& p) {
     size_t n_delta = scene.lights.size();
@@ -342,21 +728,10 @@ inline LightSample sample_any_light(const Scene& scene, const Point3& p) {
 
     if (choice < n_delta) {
         const Light& light = scene.lights[static_cast<size_t>(choice)];
-        s.is_delta = true;
         s.pdf = 1.0 / total;
-        if (light.type == LightType::Point) {
-            Vec3 to_light = light.position - p;
-            double dist2 = to_light.length_squared();
-            if (dist2 < 1e-8) return LightSample{};
-            double dist = std::sqrt(dist2);
-            s.direction = to_light / dist;
-            s.distance = dist;
-            s.radiance = light.color * light.intensity / dist2;
-        } else {
-            s.direction = (-light.direction).normalized();
-            s.distance = infinity;
-            s.radiance = light.color * light.intensity;
-        }
+        LightSample light_sample = sample_scene_light(light, p, random_double(), random_double());
+        light_sample.pdf = s.pdf;
+        return light_sample;
     } else {
         size_t idx = static_cast<size_t>(choice - n_delta);
         if (idx >= n_area) return LightSample{};
@@ -377,13 +752,11 @@ inline LightSample sample_any_light(const Scene& scene, const Point3& p) {
 
         double geom_area = eo.geometry->area();
         if (geom_area <= 0) return LightSample{};
-
-        double total_area = 0;
-        for (const EmissiveObject& e : scene.emissive_objects) total_area += e.geometry->area();
+        if (scene.emissive_total_area <= 0) return LightSample{};
 
         s.radiance = eo.emission;
         s.is_delta = false;
-        s.pdf = (dist2 / cos_light) / total_area * (double(n_area) / total);
+        s.pdf = (dist2 / cos_light) / scene.emissive_total_area * (double(n_area) / total);
     }
     return s;
 }
@@ -564,18 +937,60 @@ inline void add_auto_ground(const JsonValue& root,
     scene.objects.push_back(std::move(tri_b));
 }
 
+inline double camera_vfov_from_json(const JsonValue& c, double aspect, double fallback) {
+    if (c.has("vfov")) return c.at("vfov").numVal;
+    if (c.has("focal_length")) {
+        double focal_length = c.at("focal_length").numVal;
+        if (focal_length > 0) {
+            double sensor_height = 0.0;
+            if (c.has("sensor_height")) {
+                sensor_height = c.at("sensor_height").numVal;
+            } else if (c.has("sensor_width") && aspect > 0) {
+                sensor_height = c.at("sensor_width").numVal / aspect;
+            }
+            if (sensor_height > 0) {
+                return 2.0 * std::atan(sensor_height / (2.0 * focal_length)) * 180.0 / pi;
+            }
+        }
+    }
+    return fallback;
+}
+
 inline Camera make_auto_camera(const AABB& bounds, double aspect, const JsonValue* camera_json) {
     double vfov = 35.0;
     double aperture = 0.0;
     Vec3 vup(0, 1, 0);
+    double margin = 1.35;
+    Vec3 view_dir(0, 0, 1);
+    Vec3 target_offset(0, 0, 0);
+    bool has_view = false;
 
     if (camera_json) {
-        if (camera_json->has("vfov")) vfov = camera_json->at("vfov").numVal;
+        vfov = camera_vfov_from_json(*camera_json, aspect, vfov);
         if (camera_json->has("aperture")) aperture = camera_json->at("aperture").numVal;
+        if (camera_json->has("margin")) margin = camera_json->at("margin").numVal;
+        if (camera_json->has("target_offset")) target_offset = to_vec3(camera_json->at("target_offset"));
+        if (camera_json->has("view")) {
+            has_view = true;
+            std::string view = lower_ascii(camera_json->at("view").strVal);
+            if (view == "front") view_dir = Vec3(0, 0, 1);
+            else if (view == "back") view_dir = Vec3(0, 0, -1);
+            else if (view == "right" || view == "side") view_dir = Vec3(1, 0, 0);
+            else if (view == "left") view_dir = Vec3(-1, 0, 0);
+            else if (view == "top") {
+                view_dir = Vec3(0, 1, 0);
+                vup = Vec3(0, 0, -1);
+            } else if (view == "bottom") {
+                view_dir = Vec3(0, -1, 0);
+                vup = Vec3(0, 0, 1);
+            } else if (view == "three_quarter" || view == "3/4" || view == "three-quarter") {
+                view_dir = Vec3(0.75, 0.35, 1.0);
+            }
+        }
         if (camera_json->has("vup")) vup = to_vec3(camera_json->at("vup"));
     }
 
-    Point3 center = bounds.center();
+    Point3 center = bounds.center() + target_offset;
     Vec3 extent = bounds.extent();
     double fit_height = std::max(extent.y, extent.x / aspect);
     if (fit_height <= 1e-8) fit_height = 1.0;
@@ -583,11 +998,13 @@ inline Camera make_auto_camera(const AABB& bounds, double aspect, const JsonValu
     double theta = degrees_to_radians(vfov);
     double distance = (0.5 * fit_height) / std::tan(theta / 2);
     distance += 0.5 * extent.z;
-    distance *= 1.35;
+    distance *= margin;
     if (distance < 1.0) distance = 1.0;
 
     Point3 lookat = center;
-    Point3 lookfrom = center + Vec3(0, 0.12 * bounds.max_extent(), distance);
+    Point3 lookfrom = has_view
+        ? center + safe_normalized(view_dir, Vec3(0, 0, 1)) * distance
+        : center + Vec3(0, 0.12 * bounds.max_extent(), distance);
 
     if (camera_json) {
         if (camera_json->has("lookat")) lookat = to_vec3(camera_json->at("lookat"));
@@ -606,6 +1023,23 @@ inline std::unique_ptr<Camera> build_camera(const JsonValue& root,
     const JsonValue* camera_json = root.has("camera") ? &root.at("camera") : nullptr;
     bool auto_camera = !camera_json || get_bool(*camera_json, "auto", false);
 
+    if (camera_json && camera_json->has("orbit")) {
+        const JsonValue& c = *camera_json;
+        const JsonValue& orbit = c.at("orbit");
+        Point3 target = orbit.has("target") ? to_vec3(orbit.at("target")) : Point3(0, 0, 0);
+        double yaw = degrees_to_radians(orbit.has("yaw") ? orbit.at("yaw").numVal : 0.0);
+        double pitch = degrees_to_radians(orbit.has("pitch") ? orbit.at("pitch").numVal : 0.0);
+        double distance = orbit.has("distance") ? orbit.at("distance").numVal : 4.0;
+        double cp = std::cos(pitch);
+        Vec3 offset(std::sin(yaw) * cp, std::sin(pitch), std::cos(yaw) * cp);
+        Point3 lookfrom = target + distance * offset;
+        Vec3 vup = c.has("vup") ? to_vec3(c.at("vup")) : Vec3(0, 1, 0);
+        double vfov = camera_vfov_from_json(c, aspect, 60.0);
+        double aperture = c.has("aperture") ? c.at("aperture").numVal : 0.0;
+        double focus = c.has("focus_dist") ? c.at("focus_dist").numVal : distance;
+        return std::make_unique<Camera>(lookfrom, target, vup, vfov, aspect, aperture, focus);
+    }
+
     if (auto_camera) {
         AABB bounds;
         if (scene.has_mesh_bounds) {
@@ -620,10 +1054,178 @@ inline std::unique_ptr<Camera> build_camera(const JsonValue& root,
     Point3 lookfrom = to_vec3(c.at("lookfrom"));
     Point3 lookat   = to_vec3(c.at("lookat"));
     Vec3   vup      = c.has("vup") ? to_vec3(c.at("vup")) : Vec3(0, 1, 0);
-    double vfov     = c.has("vfov") ? c.at("vfov").numVal : 60.0;
+    double vfov     = camera_vfov_from_json(c, aspect, 60.0);
     double aperture = c.has("aperture") ? c.at("aperture").numVal : 0.0;
     double focus    = c.has("focus_dist") ? c.at("focus_dist").numVal : (lookfrom - lookat).length();
     return std::make_unique<Camera>(lookfrom, lookat, vup, vfov, aspect, aperture, focus);
+}
+
+class TriangleMeshEmissiveSubset : public Hittable {
+public:
+    TriangleMeshEmissiveSubset(const TriangleMesh* mesh, std::vector<int> tri_indices)
+        : mesh_(mesh), tri_indices_(std::move(tri_indices)) {
+        build_area_cdf();
+    }
+
+    bool hit(const Ray& r, double t_min, double t_max,
+             HitRecord& rec) const override {
+        bool hit_any = false;
+        double closest = t_max;
+        for (int tri_idx : tri_indices_) {
+            HitRecord tmp;
+            if (mesh_->hit_triangle(tri_idx, r, t_min, closest, tmp)) {
+                rec = tmp;
+                closest = tmp.t;
+                hit_any = true;
+            }
+        }
+        return hit_any;
+    }
+
+    bool bounding_box(AABB& output_box) const override {
+        bool first = true;
+        for (int tri_idx : tri_indices_) {
+            Point3 p0, p1, p2;
+            if (!triangle_points(tri_idx, p0, p1, p2)) continue;
+            AABB box;
+            Triangle(p0, p1, p2).bounding_box(box);
+            output_box = first ? box : AABB::surrounding_box(output_box, box);
+            first = false;
+        }
+        return !first;
+    }
+
+    Point3 sample_point(double r1, double r2, Vec3* normal_out = nullptr) const override {
+        if (area_cdf_.empty() || area_tri_indices_.empty() || total_area_ <= 0) return Point3();
+
+        double target = r1 * total_area_;
+        auto it = std::lower_bound(area_cdf_.begin(), area_cdf_.end(), target);
+        int local_idx = static_cast<int>(std::distance(area_cdf_.begin(), it));
+        if (local_idx >= static_cast<int>(area_tri_indices_.size())) {
+            local_idx = static_cast<int>(area_tri_indices_.size()) - 1;
+        }
+
+        double previous = local_idx > 0 ? area_cdf_[local_idx - 1] : 0.0;
+        double span = area_cdf_[local_idx] - previous;
+        double local_r1 = span > 0 ? (target - previous) / span : 0.0;
+
+        Point3 p0, p1, p2;
+        if (!triangle_points(area_tri_indices_[local_idx], p0, p1, p2)) return Point3();
+
+        double sq = std::sqrt(std::clamp(local_r1, 0.0, 1.0));
+        double b1 = 1.0 - sq;
+        double b2 = sq * (1.0 - r2);
+        double b0 = sq * r2;
+
+        if (normal_out) {
+            Vec3 n = cross(p1 - p0, p2 - p0);
+            double len = n.length();
+            *normal_out = len > 1e-12 ? n / len : Vec3(0, 1, 0);
+        }
+        return b0 * p0 + b1 * p1 + b2 * p2;
+    }
+
+    double area() const override {
+        return total_area_;
+    }
+
+private:
+    const TriangleMesh* mesh_;
+    std::vector<int> tri_indices_;
+    std::vector<int> area_tri_indices_;
+    std::vector<double> area_cdf_;
+    double total_area_ = 0;
+
+    bool triangle_points(int tri_idx, Point3& p0, Point3& p1, Point3& p2) const {
+        if (!mesh_ || tri_idx < 0) return false;
+        size_t base = static_cast<size_t>(tri_idx) * 3;
+        if (base + 2 >= mesh_->indices.size()) return false;
+        int i0 = mesh_->indices[base + 0];
+        int i1 = mesh_->indices[base + 1];
+        int i2 = mesh_->indices[base + 2];
+        if (i0 < 0 || i1 < 0 || i2 < 0) return false;
+        if (static_cast<size_t>(i0) >= mesh_->vertices.size() ||
+            static_cast<size_t>(i1) >= mesh_->vertices.size() ||
+            static_cast<size_t>(i2) >= mesh_->vertices.size()) {
+            return false;
+        }
+        p0 = mesh_->vertices[static_cast<size_t>(i0)];
+        p1 = mesh_->vertices[static_cast<size_t>(i1)];
+        p2 = mesh_->vertices[static_cast<size_t>(i2)];
+        return true;
+    }
+
+    double triangle_area(int tri_idx) const {
+        Point3 p0, p1, p2;
+        if (!triangle_points(tri_idx, p0, p1, p2)) return 0;
+        return 0.5 * cross(p1 - p0, p2 - p0).length();
+    }
+
+    void build_area_cdf() {
+        area_tri_indices_.clear();
+        area_cdf_.clear();
+        total_area_ = 0;
+        for (int tri_idx : tri_indices_) {
+            double a = triangle_area(tri_idx);
+            if (a <= 1e-20) continue;
+            total_area_ += a;
+            area_tri_indices_.push_back(tri_idx);
+            area_cdf_.push_back(total_area_);
+        }
+    }
+};
+
+inline void collect_emissive_objects(Scene& scene) {
+    scene.emissive_objects.clear();
+    scene.emissive_samplers.clear();
+    scene.emissive_total_area = 0.0;
+    for (Hittable* obj : scene.primitives.objects) {
+        Sphere* sph = dynamic_cast<Sphere*>(obj);
+        if (sph && sph->material && sph->material->is_emissive()) {
+            Emissive* em = static_cast<Emissive*>(sph->material);
+            scene.emissive_objects.push_back({sph, em->emission});
+            continue;
+        }
+        Triangle* tri = dynamic_cast<Triangle*>(obj);
+        if (tri && tri->material && tri->material->is_emissive()) {
+            Emissive* em = static_cast<Emissive*>(tri->material);
+            scene.emissive_objects.push_back({tri, em->emission});
+            continue;
+        }
+        TriangleMesh* mesh = dynamic_cast<TriangleMesh*>(obj);
+        if (mesh) {
+            std::vector<Material*> emissive_materials;
+            std::vector<std::vector<int>> tris_by_material;
+            for (size_t tri_idx = 0; tri_idx < mesh->material_per_tri.size(); tri_idx++) {
+                Material* mat = mesh->material_per_tri[tri_idx];
+                if (!mat || !mat->is_emissive()) continue;
+
+                size_t group = 0;
+                for (; group < emissive_materials.size(); group++) {
+                    if (emissive_materials[group] == mat) break;
+                }
+                if (group == emissive_materials.size()) {
+                    emissive_materials.push_back(mat);
+                    tris_by_material.push_back(std::vector<int>());
+                }
+                tris_by_material[group].push_back(static_cast<int>(tri_idx));
+            }
+
+            for (size_t group = 0; group < emissive_materials.size(); group++) {
+                Emissive* em = dynamic_cast<Emissive*>(emissive_materials[group]);
+                if (!em) continue;
+                auto sampler = std::make_unique<TriangleMeshEmissiveSubset>(
+                    mesh, tris_by_material[group]);
+                if (sampler->area() <= 0) continue;
+                Hittable* sampler_ptr = sampler.get();
+                scene.emissive_samplers.push_back(std::move(sampler));
+                scene.emissive_objects.push_back({sampler_ptr, em->emission});
+            }
+        }
+    }
+    for (const EmissiveObject& eo : scene.emissive_objects) {
+        scene.emissive_total_area += eo.geometry->area();
+    }
 }
 
 inline void load_scene(const std::string& path,
@@ -636,49 +1238,42 @@ inline void load_scene(const std::string& path,
     scene.primitive_count = 0;
     scene.has_mesh_bounds = false;
     scene.ambient_light = Color(0.04, 0.04, 0.04);
-    scene.background_type = BackgroundType::Sky;
-    scene.background_color = Color(0, 0, 0);
+    scene.environment = Environment();
+    scene.firefly_clamp = infinity;
     scene.lights.clear();
+    scene.emissive_objects.clear();
+    scene.emissive_samplers.clear();
+    scene.emissive_total_area = 0.0;
+    scene.output_options = ImageOutputOptions();
+    scene.seed = 0;
+    scene.has_seed = false;
 
     JsonValue root = parse_json_file(path);
     std::filesystem::path scene_dir = std::filesystem::absolute(path).parent_path();
 
-    if (root.has("image")) {
-        const JsonValue& img = root.at("image");
-        if (img.has("width"))     scene.width     = static_cast<int>(img.at("width").numVal);
-        if (img.has("height"))    scene.height    = static_cast<int>(img.at("height").numVal);
-        if (img.has("samples"))   scene.samples   = static_cast<int>(img.at("samples").numVal);
-        if (img.has("max_depth")) scene.max_depth = static_cast<int>(img.at("max_depth").numVal);
-        if (img.has("output"))    scene.output    = img.at("output").strVal;
-        if (img.has("exposure"))  scene.exposure  = img.at("exposure").numVal;
-    }
+    if (root.has("image")) parse_render_settings(root.at("image"), scene);
+    if (root.has("render")) parse_render_settings(root.at("render"), scene);
 
     double aspect = double(scene.width) / scene.height;
+
+    if (root.has("environment")) {
+        scene.environment = parse_environment(root.at("environment"), scene_dir);
+    } else if (root.has("background")) {
+        scene.environment = parse_environment(root.at("background"), scene_dir);
+    }
 
     if (root.has("lighting")) {
         const JsonValue& lighting = root.at("lighting");
         if (lighting.has("ambient")) scene.ambient_light = to_vec3(lighting.at("ambient"));
     }
 
-    if (root.has("background")) {
-        const JsonValue& background = root.at("background");
-        if (background.isArray()) {
-            scene.background_type = BackgroundType::Solid;
-            scene.background_color = to_vec3(background);
-        } else if (background.isObject()) {
-            if (background.has("type")) {
-                scene.background_type = parse_background_type(background.at("type").strVal);
-            }
-            if (background.has("color")) {
-                scene.background_color = to_vec3(background.at("color"));
-            }
-        }
-    }
-
+    std::string preset = scene_preset_name(root);
     if (root.has("lights")) {
         for (const JsonValue& light_json : root.at("lights").arrVal) {
             scene.lights.push_back(parse_light(light_json));
         }
+    } else if (!preset.empty()) {
+        scene.lights = lights_for_preset(preset);
     } else {
         scene.lights = default_lights();
     }
@@ -793,31 +1388,7 @@ inline void load_scene(const std::string& path,
         scene.world = std::make_unique<LinearBVH>(scene.primitives.objects);
     }
 
-    for (Hittable* obj : scene.primitives.objects) {
-        Sphere* sph = dynamic_cast<Sphere*>(obj);
-        if (sph && sph->material && sph->material->is_emissive()) {
-            Emissive* em = static_cast<Emissive*>(sph->material);
-            scene.emissive_objects.push_back({sph, em->emission});
-            continue;
-        }
-        Triangle* tri = dynamic_cast<Triangle*>(obj);
-        if (tri && tri->material && tri->material->is_emissive()) {
-            Emissive* em = static_cast<Emissive*>(tri->material);
-            scene.emissive_objects.push_back({tri, em->emission});
-            continue;
-        }
-        TriangleMesh* mesh = dynamic_cast<TriangleMesh*>(obj);
-        if (mesh) {
-            bool any_emissive = false;
-            for (Material* m : mesh->material_per_tri) {
-                if (m && m->is_emissive()) { any_emissive = true; break; }
-            }
-            if (any_emissive) {
-                scene.emissive_objects.push_back({mesh,
-                    static_cast<Emissive*>(mesh->material_per_tri[0])->emission});
-            }
-        }
-    }
+    collect_emissive_objects(scene);
 }
 
 #endif

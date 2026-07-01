@@ -1,0 +1,45 @@
+{
+    "image": {
+        "width": 128,
+        "height": 128,
+        "samples": 8,
+        "max_depth": 16,
+        "output": "/tmp/golden_no_normal_obj.png",
+        "tone_map": "aces",
+        "exposure": 1.0,
+        "seed": 56789
+    },
+    "camera": {
+        "lookfrom": [0, 0, 5],
+        "lookat": [0, 0, 0],
+        "vup": [0, 1, 0],
+        "vfov": 40,
+        "aperture": 0.0,
+        "focus_dist": 5.0
+    },
+    "lighting": {
+        "ambient": [0.05, 0.05, 0.05]
+    },
+    "lights": [
+        {
+            "type": "directional",
+            "direction": [-0.4, -1.0, -0.3],
+            "color": [1.0, 0.96, 0.9],
+            "intensity": 0.8
+        }
+    ],
+    "objects": [
+        {
+            "type": "mesh",
+            "file": "../../../models/cube_no_normal.obj",
+            "transform": {
+                "rotate": [20, 30, 0],
+                "scale": 1.0
+            },
+            "material": {
+                "type": "lambertian",
+                "albedo": [0.8, 0.4, 0.2]
+            }
+        }
+    ]
+}

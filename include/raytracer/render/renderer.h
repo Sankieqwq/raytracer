@@ -7,15 +7,19 @@
 #include "raytracer/math/util.h"
 #include "raytracer/math/vec3.h"
 #include "raytracer/scene/scene.h"
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <functional>
+#include <string>
 #include <thread>
 #include <vector>
 
 struct RenderOptions {
     bool direct_only = false;
     bool preview = false;
+    bool stats = false;
+    std::string stats_format = "text";
     int threads = 0;
 };
 
@@ -33,8 +37,40 @@ struct RenderOutput {
 };
 
 inline bool is_shadowed(const Hittable& world, const Ray& shadow_ray, double max_t) {
-    HitRecord shadow_rec;
-    return world.hit(shadow_ray, 0.001, max_t, shadow_rec);
+    Ray ray = shadow_ray;
+    double remaining_t = max_t;
+    for (int skip_count = 0; skip_count < 16; skip_count++) {
+        HitRecord shadow_rec;
+        if (!world.hit(ray, 0.001, remaining_t, shadow_rec)) return false;
+
+        if (shadow_rec.material && shadow_rec.material->is_alpha_masked()) {
+            Color bc = shadow_rec.material->base_color(shadow_rec);
+            double alpha = std::max({bc.x, bc.y, bc.z});
+            if (alpha < shadow_rec.material->alpha_cutoff()) {
+                Vec3 dir = ray.direction.normalized();
+                remaining_t -= shadow_rec.t;
+                if (remaining_t <= 0.001) return false;
+                ray = Ray(shadow_rec.p + 0.001 * dir, ray.direction);
+                continue;
+            }
+        }
+
+        return true;
+    }
+    return false;
+}
+
+inline const EmissiveObject* sample_emissive_by_area(const Scene& scene,
+                                                     double r,
+                                                     double total_area) {
+    if (total_area <= 0) return nullptr;
+    double target = r * total_area;
+    double accum = 0;
+    for (const EmissiveObject& eo : scene.emissive_objects) {
+        accum += eo.geometry->area();
+        if (target <= accum) return &eo;
+    }
+    return scene.emissive_objects.empty() ? nullptr : &scene.emissive_objects.back();
 }
 
 inline Color direct_delta_lights(const Ray& r_in, const HitRecord& rec, const Scene& scene) {
@@ -42,22 +78,19 @@ inline Color direct_delta_lights(const Ray& r_in, const HitRecord& rec, const Sc
     Color result = base * scene.ambient_light;
 
     for (const Light& light : scene.lights) {
-        Vec3 light_dir;
-        double max_t = infinity;
-        double attenuation = 1.0;
-
-        if (light.type == LightType::Point) {
-            Vec3 to_light = light.position - rec.p;
-            double dist2 = to_light.length_squared();
-            if (dist2 <= 1e-8) continue;
-            double dist = std::sqrt(dist2);
-            light_dir = to_light / dist;
-            max_t = dist - 0.001;
-            attenuation = 1.0 / dist2;
-        } else {
-            light_dir = (-light.direction).normalized();
+        double r1 = 0.5;
+        double r2 = 0.5;
+        if (light.type == LightType::Sphere || light.type == LightType::Rect ||
+            light.type == LightType::Disk) {
+            r1 = random_double();
+            r2 = random_double();
         }
 
+        LightSample sample = sample_scene_light(light, rec.p, r1, r2);
+        if (sample.radiance.length_squared() <= 0) continue;
+
+        Vec3 light_dir = sample.direction;
+        double max_t = std::isfinite(sample.distance) ? sample.distance - 0.001 : infinity;
         double n_dot_l = dot(rec.normal, light_dir);
         if (n_dot_l <= 0) continue;
 
@@ -65,21 +98,11 @@ inline Color direct_delta_lights(const Ray& r_in, const HitRecord& rec, const Sc
         if (is_shadowed(*scene.world, shadow_ray, max_t)) continue;
 
         Ray light_ray(rec.p, light_dir);
-        Color f_val = rec.material ? rec.material->f(r_in, light_ray, rec) : Color(0, 0, 0);
-        if (f_val.length_squared() < 1e-12) continue;
-        result += f_val * light.color * (light.intensity * attenuation * n_dot_l);
+        Color brdf = rec.material ? rec.material->f(r_in, light_ray, rec) : base / pi;
+        result += brdf * sample.radiance * n_dot_l;
     }
 
     return result;
-}
-
-inline Color background_color(const Ray& r, const Scene& scene) {
-    if (scene.background_type == BackgroundType::Sky) {
-        Vec3 unit_dir = r.direction.normalized();
-        double t = 0.5 * (unit_dir.y + 1.0);
-        return (1 - t) * Color(1.0, 1.0, 1.0) + t * Color(0.5, 0.7, 1.0);
-    }
-    return scene.background_color;
 }
 
 inline Color ray_color(const Ray& r, const Scene& scene, int depth,
@@ -90,14 +113,13 @@ inline Color ray_color(const Ray& r, const Scene& scene, int depth,
 
     HitRecord rec;
     if (!scene.world->hit(r, 0.001, infinity, rec)) {
-        return background_color(r, scene);
+        return scene_background(scene, r);
     }
 
     if (rec.material && rec.material->is_emissive()) {
-        Emissive* em = static_cast<Emissive*>(rec.material);
+        Color emitted = rec.material->emitted(rec);
         if (prev_brdf && prev_pdf > 0 && !scene.emissive_objects.empty()) {
-            double total_area = 0;
-            for (const EmissiveObject& eo : scene.emissive_objects) total_area += eo.geometry->area();
+            double total_area = scene.emissive_total_area;
             double pdf_light = 0;
             if (total_area > 0) {
                 double dist2 = (rec.p - r.origin).length_squared();
@@ -105,36 +127,68 @@ inline Color ray_color(const Ray& r, const Scene& scene, int depth,
                 if (cos_light > 0) pdf_light = dist2 / (cos_light * total_area);
             }
             double w_brdf = prev_pdf / (prev_pdf + pdf_light);
-            return em->emission * w_brdf;
+            return emitted * w_brdf;
         }
-        return em->emission;
+        return emitted;
+    }
+
+    if (rec.material && rec.material->is_alpha_masked()) {
+        Color bc = rec.material->base_color(rec);
+        double alpha = std::max({bc.x, bc.y, bc.z});
+        if (alpha < rec.material->alpha_cutoff()) {
+            Vec3 continue_dir = r.direction.normalized();
+            Ray continue_ray(rec.p + 0.001 * continue_dir, r.direction);
+            // Preserve the current medium so Beer-Lambert keeps accumulating
+            // across alpha-mask cutouts (e.g. a leaf inside a glass vase).
+            continue_ray.medium_color = r.medium_color;
+            continue_ray.medium_attenuation_distance = r.medium_attenuation_distance;
+            return ray_color(continue_ray, scene, depth, options, prev_pdf, prev_brdf);
+        }
     }
 
     Ray scattered;
-    Color attenuation, emission;
-    bool did_scatter = rec.material && rec.material->scatter(r, rec, attenuation, scattered, emission);
+    Color attenuation, scatter_emission;
+    bool did_scatter = rec.material && rec.material->scatter(r, rec, attenuation, scattered, scatter_emission);
+    // Non-transparent materials don't change the medium, so the scattered ray
+    // keeps traveling in whatever medium the incoming ray was in.  Dielectric
+    // already set the outgoing medium in scatter(); leave it untouched here.
+    if (did_scatter && rec.material && !rec.material->is_transparent()) {
+        scattered.medium_color = r.medium_color;
+        scattered.medium_attenuation_distance = r.medium_attenuation_distance;
+    }
+    Color emission = scatter_emission + (rec.material ? rec.material->emitted(rec) : Color(0, 0, 0));
 
     if (rec.material && rec.material->is_specular()) {
         if (options.direct_only) return emission;
         if (!did_scatter) return emission;
-        double brdf_pdf = rec.material->pdf(r, scattered, rec);
-        if (brdf_pdf <= 0) brdf_pdf = 1;
-        return emission + attenuation * ray_color(scattered, scene, depth - 1, options, brdf_pdf, true);
+
+        int bounces_done = scene.max_depth - depth;
+        bool rr_active = bounces_done >= 5;
+        double p = 1.0;
+        if (rr_active) {
+            double lum = 0.2126 * attenuation.x + 0.7152 * attenuation.y + 0.0722 * attenuation.z;
+            p = std::min(0.95, std::max(0.1, lum));
+            if (random_double() > p) return emission;
+        }
+
+        Color child = ray_color(scattered, scene, depth - 1, options, 1.0, true);
+        if (rr_active) child = child / p;
+        return emission + attenuation * child;
     }
 
     Color direct = direct_delta_lights(r, rec, scene);
 
     if (!scene.emissive_objects.empty()) {
-        double r1 = random_double(), r2 = random_double();
-        size_t idx = static_cast<size_t>(random_double() * scene.emissive_objects.size());
-        if (idx >= scene.emissive_objects.size()) idx = scene.emissive_objects.size() - 1;
-        const EmissiveObject& eo = scene.emissive_objects[idx];
+        double total_area = scene.emissive_total_area;
+        const EmissiveObject* eo = sample_emissive_by_area(scene, random_double(), total_area);
         Vec3 light_normal;
-        Point3 light_point = eo.geometry->sample_point(r1, r2, &light_normal);
+        Point3 light_point = eo
+            ? eo->geometry->sample_point(random_double(), random_double(), &light_normal)
+            : Point3();
 
         Vec3 to_light = light_point - rec.p;
         double dist2 = to_light.length_squared();
-        if (dist2 > 1e-8) {
+        if (eo && total_area > 0 && dist2 > 1e-8) {
             double dist = std::sqrt(dist2);
             Vec3 light_dir = to_light / dist;
             double n_dot_l = dot(rec.normal, light_dir);
@@ -143,14 +197,12 @@ inline Color ray_color(const Ray& r, const Scene& scene, int depth,
                 if (cos_light > 0) {
                     Ray shadow_ray(rec.p + 0.001 * rec.normal, light_dir);
                     if (!is_shadowed(*scene.world, shadow_ray, dist - 0.001)) {
-                        double total_area = 0;
-                        for (const EmissiveObject& e : scene.emissive_objects) total_area += e.geometry->area();
                         double pdf_light = (dist2 / cos_light) / total_area;
                         Ray light_ray(rec.p, light_dir);
                         Color f_val = rec.material ? rec.material->f(r, light_ray, rec) : Color(0, 0, 0);
                         double brdf_pdf = rec.material ? rec.material->pdf(r, light_ray, rec) : 0;
                         double w_light = pdf_light / (pdf_light + brdf_pdf);
-                        direct += eo.emission * f_val * n_dot_l * w_light / pdf_light;
+                        direct += eo->emission * f_val * n_dot_l * w_light / pdf_light;
                     }
                 }
             }
@@ -163,7 +215,8 @@ inline Color ray_color(const Ray& r, const Scene& scene, int depth,
     double brdf_pdf = rec.material->pdf(r, scattered, rec);
     Color f_val = rec.material->f(r, scattered, rec);
     if (brdf_pdf <= 0) {
-        return emission + direct + attenuation * ray_color(scattered, scene, depth - 1, options, 1.0, true);
+        return emission + direct +
+               attenuation * ray_color(scattered, scene, depth - 1, options, 1.0, true);
     }
 
     Color indirect = f_val * dot(rec.normal, scattered.direction) / brdf_pdf
@@ -230,9 +283,11 @@ inline RenderOutput render_scene(const Scene& scene,
                     if ((s & 15) == 0 && cancel_requested()) break;
                     double offset_x = (options.direct_only && scene.samples == 1) ? 0.5 : random_double();
                     double offset_y = (options.direct_only && scene.samples == 1) ? 0.5 : random_double();
-                    double u = (i + offset_x) / (scene.width - 1);
-                    double v = (sample_row + offset_y) / (scene.height - 1);
-                    col += ray_color(scene.camera->get_ray(u, v), scene, scene.max_depth, options, infinity, false);
+                    double u = (i + offset_x) / std::max(1, scene.width - 1);
+                    double v = (sample_row + offset_y) / std::max(1, scene.height - 1);
+                    Color sample = ray_color(
+                        scene.camera->get_ray(u, v), scene, scene.max_depth, options, infinity, false);
+                    col += clamp_radiance(sample, scene.firefly_clamp);
                 }
                 output.pixels[static_cast<size_t>(j) * static_cast<size_t>(scene.width) +
                               static_cast<size_t>(i)] = col;

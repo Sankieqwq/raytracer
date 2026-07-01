@@ -1,0 +1,145 @@
+[
+  {
+    "name": "three_balls",
+    "title": "Baseline Glass/Metal",
+    "path": "renders/high_quality_20260701/three_balls_s512.png",
+    "w": 800,
+    "h": 400,
+    "mean_luma": 156.73516731558624,
+    "sat_pct": 0.0,
+    "dark_pct": 0.0,
+    "size_kb": 380.8759765625
+  },
+  {
+    "name": "glass",
+    "title": "Glass Sphere",
+    "path": "renders/high_quality_20260701/glass_s512.png",
+    "w": 600,
+    "h": 600,
+    "mean_luma": 206.76775390814507,
+    "sat_pct": 0.0,
+    "dark_pct": 0.0,
+    "size_kb": 169.1171875
+  },
+  {
+    "name": "glass_bottle",
+    "title": "GLB Glass Bottle",
+    "path": "renders/high_quality_20260701/glass_bottle_s512.png",
+    "w": 600,
+    "h": 600,
+    "mean_luma": 188.4790489984255,
+    "sat_pct": 0.0,
+    "dark_pct": 0.0,
+    "size_kb": 357.048828125
+  },
+  {
+    "name": "glass_emissive",
+    "title": "Glass + Emissive",
+    "path": "renders/high_quality_20260701/glass_emissive_s512.png",
+    "w": 600,
+    "h": 600,
+    "mean_luma": 187.23840829070332,
+    "sat_pct": 0.023055555555555555,
+    "dark_pct": 0.0,
+    "size_kb": 416.9970703125
+  },
+  {
+    "name": "pbr_test",
+    "title": "PBR Rough/Metal",
+    "path": "renders/high_quality_20260701/pbr_test_s512.png",
+    "w": 600,
+    "h": 400,
+    "mean_luma": 187.41437896123932,
+    "sat_pct": 0.45958333333333334,
+    "dark_pct": 0.0,
+    "size_kb": 306.740234375
+  },
+  {
+    "name": "mirror_glass_water",
+    "title": "Mirror Glass Water",
+    "path": "renders/high_quality_20260701/mirror_glass_water_s512.png",
+    "w": 640,
+    "h": 360,
+    "mean_luma": 201.39479061221166,
+    "sat_pct": 0.012586805555555556,
+    "dark_pct": 0.0,
+    "size_kb": 165.6474609375
+  },
+  {
+    "name": "cornell_box",
+    "title": "Cornell Box",
+    "path": "renders/high_quality_20260701/cornell_box_s512.png",
+    "w": 600,
+    "h": 600,
+    "mean_luma": 157.034407966139,
+    "sat_pct": 0.49333333333333335,
+    "dark_pct": 0.0,
+    "size_kb": 594.53515625
+  },
+  {
+    "name": "khronos_water_bottle",
+    "title": "Khronos WaterBottle",
+    "path": "renders/high_quality_20260701/khronos_water_bottle_s512.png",
+    "w": 640,
+    "h": 360,
+    "mean_luma": 218.963105123561,
+    "sat_pct": 0.0,
+    "dark_pct": 0.0,
+    "size_kb": 72.8798828125
+  },
+  {
+    "name": "khronos_transmission_test",
+    "title": "Khronos Transmission",
+    "path": "renders/high_quality_20260701/khronos_transmission_test_s512.png",
+    "w": 640,
+    "h": 360,
+    "mean_luma": 211.15747978850897,
+    "sat_pct": 0.0,
+    "dark_pct": 0.0,
+    "size_kb": 140.96875
+  },
+  {
+    "name": "mark",
+    "title": "OBJ Mark",
+    "path": "renders/high_quality_20260701/mark_s512.png",
+    "w": 320,
+    "h": 200,
+    "mean_luma": 206.16559133761083,
+    "sat_pct": 0.0,
+    "dark_pct": 0.0,
+    "size_kb": 38.08203125
+  },
+  {
+    "name": "obj_mtl_test",
+    "title": "OBJ MTL",
+    "path": "renders/high_quality_20260701/obj_mtl_test_s512.png",
+    "w": 256,
+    "h": 180,
+    "mean_luma": 210.60157245655182,
+    "sat_pct": 0.0,
+    "dark_pct": 0.0,
+    "size_kb": 5.8046875
+  },
+  {
+    "name": "bunny_test",
+    "title": "OBJ Bunny",
+    "path": "renders/high_quality_20260701/bunny_test_s512.png",
+    "w": 400,
+    "h": 400,
+    "mean_luma": 220.91622328779715,
+    "sat_pct": 0.0,
+    "dark_pct": 0.0,
+    "size_kb": 29.7802734375
+  },
+  {
+    "name": "no_normal_obj",
+    "title": "No Normal OBJ",
+    "path": "renders/high_quality_20260701/no_normal_obj_s512.png",
+    "w": 400,
+    "h": 400,
+    "mean_luma": 199.91469232368013,
+    "sat_pct": 0.0,
+    "dark_pct": 0.0,
+    "size_kb": 130.4248046875
+  }
+]

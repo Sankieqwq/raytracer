@@ -1,5 +1,8 @@
 #define TINYOBJLOADER_IMPLEMENTATION
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
 
+#include "raytracer/render/renderer.h"
 #include "raytracer/scene/scene.h"
 
 #include <cmath>
@@ -33,10 +36,21 @@ bool finite_vec(const Vec3& v) {
     return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z);
 }
 
+bool positive_color(const Color& c) {
+    return c.x > 0 && c.y > 0 && c.z > 0;
+}
+
 JsonValue number(double value) {
     JsonValue v;
     v.type = JsonValue::Number;
     v.numVal = value;
+    return v;
+}
+
+JsonValue string_value(const std::string& value) {
+    JsonValue v;
+    v.type = JsonValue::String;
+    v.strVal = value;
     return v;
 }
 
@@ -140,6 +154,79 @@ void test_obj_loader_handles_mixed_missing_attributes() {
     check(mesh.uvs.empty() || mesh.uvs.size() == mesh.vertices.size(), "OBJ loader UV data must be empty or complete");
 }
 
+void test_obj_loader_reads_mtl_diffuse_and_texture() {
+    ObjMeshData mesh = load_model_mesh("models/obj/mtl_test.obj");
+    check(mesh.materials.size() == 1, "OBJ MTL fixture should load one material");
+    if (!mesh.materials.empty()) {
+        check(near_vec(mesh.materials[0].albedo, Color(0.25, 0.5, 0.75)),
+              "Kd should map to loaded material albedo");
+        check(mesh.materials[0].base_color_texture == 0,
+              "map_Kd should map to base color texture index");
+        check(!mesh.textures.empty(), "map_Kd should create a loaded texture entry");
+    }
+}
+
+const LoadedMaterialData* find_loaded_material(const ObjMeshData& mesh, const std::string& name) {
+    for (const LoadedMaterialData& material : mesh.materials) {
+        if (material.name == name) return &material;
+    }
+    return nullptr;
+}
+
+void test_obj_loader_reads_extended_mtl_fields() {
+    ObjMeshData mesh = load_model_mesh("models/obj/mtl_extended.obj");
+    check(mesh.materials.size() == 3, "extended OBJ MTL fixture should load three materials");
+
+    const LoadedMaterialData* glow = find_loaded_material(mesh, "glow");
+    check(glow != nullptr, "extended OBJ MTL should load emissive material");
+    if (glow) {
+        check(near_vec(glow->emissive, Color(2.0, 1.0, 0.5)),
+              "OBJ MTL Ke should map to emissive color");
+        check(glow->emissive_texture >= 0,
+              "OBJ MTL map_Ke should map to emissive texture, including map options");
+    }
+
+    const LoadedMaterialData* glassy = find_loaded_material(mesh, "glassy");
+    check(glassy != nullptr, "extended OBJ MTL should load transparent material");
+    if (glassy) {
+        check(glassy->alpha_blend, "OBJ MTL d less than one should enable alpha blend");
+        check(near(glassy->alpha, 0.35), "OBJ MTL d should map to alpha");
+        check(near(glassy->ior, 1.45), "OBJ MTL Ni should map to IOR");
+    }
+
+    const LoadedMaterialData* shiny = find_loaded_material(mesh, "shiny");
+    check(shiny != nullptr, "extended OBJ MTL should load specular material");
+    if (shiny) {
+        check(shiny->metallic > 0.85, "OBJ MTL Ks should map strong specular materials toward metal");
+        check(shiny->roughness < 0.1, "OBJ MTL Ns should map high shininess to low roughness");
+    }
+}
+
+void test_obj_loader_reads_additional_texture_maps() {
+    ObjMeshData mesh = load_model_mesh("models/obj/mtl_extended.obj");
+    const LoadedMaterialData* glassy = find_loaded_material(mesh, "glassy");
+    check(glassy != nullptr, "extended OBJ MTL should load glassy material");
+    if (glassy) {
+        check(glassy->alpha_texture >= 0, "OBJ MTL map_d should map to alpha texture");
+    }
+
+    const LoadedMaterialData* shiny = find_loaded_material(mesh, "shiny");
+    check(shiny != nullptr, "extended OBJ MTL should load shiny material");
+    if (shiny) {
+        check(shiny->specular_texture >= 0, "OBJ MTL map_Ks should map to specular texture");
+        check(shiny->shininess_texture >= 0, "OBJ MTL map_Ns should map to shininess texture");
+    }
+}
+
+void test_obj_loader_ignores_missing_mtl_file() {
+    try {
+        ObjMeshData mesh = load_model_mesh("models/obj/mark.obj");
+        check(!mesh.triangles.empty(), "OBJ with missing MTL should still load geometry");
+    } catch (const std::exception& e) {
+        check(false, std::string("OBJ with missing MTL should not fail: ") + e.what());
+    }
+}
+
 void test_triangle_mesh_exposes_internal_acceleration() {
     TriangleMesh mesh;
     for (int i = 0; i < 8; ++i) {
@@ -160,6 +247,674 @@ void test_triangle_mesh_exposes_internal_acceleration() {
     check_acceleration_node_count(mesh);
 }
 
+void test_pbr_exposes_brdf_and_pdf_for_direct_lighting() {
+    auto albedo = std::make_shared<SolidColorTexture>(Color(0.8, 0.7, 0.6));
+    PBR pbr(albedo, 0.0, 0.45);
+
+    HitRecord rec;
+    rec.p = Point3(0, 0, 0);
+    rec.normal = Vec3(0, 1, 0);
+    rec.tangent = Vec3(1, 0, 0);
+    rec.has_tangent = true;
+    rec.u = 0.5;
+    rec.v = 0.5;
+
+    Ray incoming(Point3(0, 1, 1), Vec3(0, -1, -1).normalized());
+    Ray outgoing(rec.p, Vec3(0, 1, 1).normalized());
+
+    Color brdf = pbr.f(incoming, outgoing, rec);
+    double pdf = pbr.pdf(incoming, outgoing, rec);
+
+    check(!pbr.is_specular(), "PBR should use the non-delta BRDF path for direct light and MIS");
+    check(pdf > 0 && std::isfinite(pdf), "PBR pdf should be positive for a valid outgoing direction");
+    check(finite_vec(brdf) && positive_color(brdf), "PBR BRDF should be finite and positive for a lit direction");
+}
+
+void test_display_color_exposure_and_tone_mapping() {
+    ImageOutputOptions opts;
+    opts.exposure = 2.0;
+    opts.tone_map = ToneMapMode::Reinhard;
+    Color out = to_display_color(Color(1.0, 0.5, 0.0), 1, opts);
+
+    check(out.x > out.y, "tone mapped red channel should remain brighter than green");
+    check(out.x < 1.0 && out.y < 1.0, "tone mapped display color should stay below one");
+    check(out.z == 0.0, "zero input channel should stay zero");
+}
+
+void test_output_format_detection() {
+    check(output_format_for_path("image.ppm") == ImageOutputFormat::PPM,
+          "ppm extension should select PPM output");
+    check(output_format_for_path("image.png") == ImageOutputFormat::PNG,
+          "png extension should select PNG output");
+    check(output_format_for_path("image.unknown") == ImageOutputFormat::PPM,
+          "unknown extension should preserve old PPM behavior");
+}
+
+void test_environment_solid_and_gradient_backgrounds() {
+    {
+        std::ofstream out("/tmp/rt_environment_solid.json");
+        out << "{"
+            << "\"image\":{\"width\":16,\"height\":8},"
+            << "\"environment\":{\"type\":\"solid\",\"color\":[0.2,0.3,0.4],\"intensity\":2.0},"
+            << "\"objects\":[]"
+            << "}";
+    }
+    Scene solid_scene;
+    load_scene("/tmp/rt_environment_solid.json", solid_scene);
+    check(solid_scene.environment.type == EnvironmentType::Solid,
+          "environment.type solid should select solid background");
+    check(near_vec(scene_background(solid_scene, Ray(Point3(0, 0, 0), Vec3(0, 1, 0))),
+                   Color(0.4, 0.6, 0.8)),
+          "solid environment should return color multiplied by intensity");
+
+    {
+        std::ofstream out("/tmp/rt_environment_gradient.json");
+        out << "{"
+            << "\"image\":{\"width\":16,\"height\":8},"
+            << "\"environment\":{\"type\":\"gradient\",\"top\":[0.0,0.0,1.0],\"bottom\":[1.0,1.0,1.0]},"
+            << "\"objects\":[]"
+            << "}";
+    }
+    Scene gradient_scene;
+    load_scene("/tmp/rt_environment_gradient.json", gradient_scene);
+    Color up = scene_background(gradient_scene, Ray(Point3(0, 0, 0), Vec3(0, 1, 0)));
+    Color down = scene_background(gradient_scene, Ray(Point3(0, 0, 0), Vec3(0, -1, 0)));
+    check(down.x > up.x && down.y > up.y,
+          "gradient environment should vary with ray direction");
+}
+
+void test_extended_light_types_parse() {
+    JsonValue rect;
+    rect.type = JsonValue::Object;
+    rect.objVal["type"] = string_value("rect");
+    rect.objVal["position"] = array3(0, 3, 0);
+    rect.objVal["u"] = array3(2, 0, 0);
+    rect.objVal["v"] = array3(0, 0, 1);
+    Light rect_light = parse_light(rect);
+    check(rect_light.type == LightType::Rect, "rect light should parse as rectangular area light");
+    check(near(rect_light.area(), 2.0), "rect light area should come from u cross v");
+
+    JsonValue sphere;
+    sphere.type = JsonValue::Object;
+    sphere.objVal["type"] = string_value("sphere");
+    sphere.objVal["position"] = array3(1, 2, 3);
+    sphere.objVal["radius"] = number(0.5);
+    Light sphere_light = parse_light(sphere);
+    check(sphere_light.type == LightType::Sphere, "sphere light should parse as spherical area light");
+    check(near(sphere_light.radius, 0.5), "sphere light should store radius");
+
+    JsonValue spot;
+    spot.type = JsonValue::Object;
+    spot.objVal["type"] = string_value("spot");
+    spot.objVal["position"] = array3(0, 3, 0);
+    spot.objVal["direction"] = array3(0, -1, 0);
+    spot.objVal["angle"] = number(20.0);
+    Light spot_light = parse_light(spot);
+    check(spot_light.type == LightType::Spot, "spot light should parse as spot light");
+    check(near(spot_light.angle, 20.0), "spot light should store cone angle");
+}
+
+void test_extended_light_sampling_outputs_radiance() {
+    JsonValue rect;
+    rect.type = JsonValue::Object;
+    rect.objVal["type"] = string_value("rect");
+    rect.objVal["position"] = array3(0, 2, 0);
+    rect.objVal["direction"] = array3(0, -1, 0);
+    rect.objVal["u"] = array3(2, 0, 0);
+    rect.objVal["v"] = array3(0, 0, 2);
+    rect.objVal["intensity"] = number(4.0);
+    Light rect_light = parse_light(rect);
+    LightSample rect_sample = sample_scene_light(rect_light, Point3(0, 0, 0), 0.5, 0.5);
+    check(rect_sample.radiance.x > 0.0 && near(rect_sample.distance, 2.0),
+          "rect light sampling should produce finite positive direct radiance");
+
+    JsonValue spot;
+    spot.type = JsonValue::Object;
+    spot.objVal["type"] = string_value("spot");
+    spot.objVal["position"] = array3(0, 2, 0);
+    spot.objVal["direction"] = array3(0, -1, 0);
+    spot.objVal["angle"] = number(10.0);
+    Light spot_light = parse_light(spot);
+    check(sample_scene_light(spot_light, Point3(0, 0, 0)).radiance.x > 0.0,
+          "spot light should illuminate points inside its cone");
+    check(sample_scene_light(spot_light, Point3(2, 0, 0)).radiance.length_squared() == 0.0,
+          "spot light should reject points outside its cone");
+}
+
+void test_camera_focal_length_orbit_and_framing_fields() {
+    {
+        std::ofstream out("/tmp/rt_camera_focal.json");
+        out << "{"
+            << "\"image\":{\"width\":100,\"height\":100},"
+            << "\"camera\":{\"lookfrom\":[0,0,5],\"lookat\":[0,0,0],\"focal_length\":50,\"sensor_height\":50},"
+            << "\"objects\":[]"
+            << "}";
+    }
+    Scene focal_scene;
+    load_scene("/tmp/rt_camera_focal.json", focal_scene);
+    check(near(focal_scene.camera->vfov_degrees(), 53.13010235415598, 1e-6),
+          "camera focal_length/sensor_height should derive vertical FOV");
+
+    {
+        std::ofstream out("/tmp/rt_camera_orbit.json");
+        out << "{"
+            << "\"image\":{\"width\":100,\"height\":100},"
+            << "\"camera\":{\"orbit\":{\"target\":[0,1,0],\"yaw\":0,\"pitch\":0,\"distance\":4}},"
+            << "\"objects\":[]"
+            << "}";
+    }
+    Scene orbit_scene;
+    load_scene("/tmp/rt_camera_orbit.json", orbit_scene);
+    check(near_vec(orbit_scene.camera->lookfrom(), Point3(0, 1, 4), 1e-6),
+          "camera orbit should derive lookfrom from target/yaw/pitch/distance");
+
+    {
+        std::ofstream out("/tmp/rt_camera_auto_view.json");
+        out << "{"
+            << "\"image\":{\"width\":100,\"height\":100},"
+            << "\"camera\":{\"auto\":true,\"view\":\"front\",\"margin\":2.0,\"target_offset\":[0,1,0]},"
+            << "\"objects\":[{\"type\":\"sphere\",\"center\":[0,0,0],\"radius\":1,\"material\":{\"type\":\"lambertian\",\"albedo\":[1,1,1]}}]"
+            << "}";
+    }
+    Scene auto_scene;
+    load_scene("/tmp/rt_camera_auto_view.json", auto_scene);
+    check(auto_scene.camera->lookfrom().z > 2.0 && auto_scene.camera->lookat().y > 0.5,
+          "auto camera should honor view, margin, and target_offset");
+}
+
+void test_scene_preset_and_render_block_are_accepted() {
+    std::ofstream out("/tmp/rt_scene_preset.json");
+    out << "{"
+        << "\"render\":{\"width\":48,\"height\":24,\"samples\":3,\"max_depth\":7,\"firefly_clamp\":4.0},"
+        << "\"scene\":{\"preset\":\"studio_softbox\"},"
+        << "\"objects\":[{\"type\":\"sphere\",\"center\":[0,0,0],\"radius\":1,\"material\":{\"type\":\"lambertian\",\"albedo\":[1,1,1]}}]"
+        << "}";
+    out.close();
+
+    Scene scene;
+    load_scene("/tmp/rt_scene_preset.json", scene);
+    check(scene.width == 48 && scene.height == 24 && scene.samples == 3 && scene.max_depth == 7,
+          "render block should be accepted as an image alias");
+    check(near(scene.firefly_clamp, 4.0), "render.firefly_clamp should be parsed");
+    bool has_rect = false;
+    for (const Light& light : scene.lights) has_rect = has_rect || light.type == LightType::Rect;
+    check(has_rect, "studio_softbox preset should add a rectangular softbox light");
+}
+
+void test_firefly_clamp_preserves_hue_by_scaling() {
+    check(near_vec(clamp_radiance(Color(10, 4, 2), 5.0), Color(5, 2, 1)),
+          "firefly clamp should scale radiance instead of clipping channels independently");
+    check(near_vec(clamp_radiance(Color(1, 2, 3), infinity), Color(1, 2, 3)),
+          "infinite firefly clamp should leave radiance unchanged");
+}
+
+void test_loaded_material_emissive_routes_to_emissive() {
+    Scene scene;
+    ObjMeshData mesh;
+    LoadedMaterialData data;
+    data.emissive = Color(2, 3, 4);
+
+    Material* mat = add_loaded_material(mesh, data, scene);
+    check(mat->is_emissive(), "GLB emissiveFactor should route to Emissive material");
+}
+
+void test_loaded_glb_pbr_uses_metallic_roughness_and_normal_textures() {
+    Scene scene;
+    ObjMeshData mesh;
+    LoadedTextureData mr_texture;
+    mr_texture.path = "textures/mtl_test.ppm";
+    mesh.textures.push_back(mr_texture);
+    LoadedTextureData normal_texture;
+    normal_texture.path = "textures/mtl_test.ppm";
+    mesh.textures.push_back(normal_texture);
+
+    LoadedMaterialData data;
+    data.use_pbr = true;
+    data.albedo = Color(0.8, 0.7, 0.6);
+    data.metallic = 0.1;
+    data.roughness = 0.2;
+    data.metallic_roughness_texture = 0;
+    data.normal_texture = 1;
+
+    Material* mat = add_loaded_material(mesh, data, scene);
+    auto* pbr = dynamic_cast<PBR*>(mat);
+    check(pbr != nullptr, "GLB PBR material should route to PBR material");
+    if (pbr) {
+        HitRecord rec;
+        rec.u = 0.0;
+        rec.v = 0.0;
+        rec.p = Point3(0, 0, 0);
+        check(near(pbr->roughness->value(rec.u, rec.v, rec.p).x, 128.0 / 255.0, 1e-6),
+              "GLB metallicRoughnessTexture green channel should drive roughness");
+        check(near(pbr->metallic->value(rec.u, rec.v, rec.p).x, 192.0 / 255.0, 1e-6),
+              "GLB metallicRoughnessTexture blue channel should drive metallic");
+        check(pbr->has_normal_map, "GLB normalTexture should enable PBR normal map");
+    }
+}
+
+void test_loaded_glb_pbr_emissive_texture_preserves_surface_shading() {
+    Scene scene;
+    ObjMeshData mesh;
+    LoadedTextureData texture;
+    texture.path = "textures/mtl_test.ppm";
+    mesh.textures.push_back(texture);
+
+    LoadedMaterialData data;
+    data.use_pbr = true;
+    data.albedo = Color(0.8, 0.7, 0.6);
+    data.metallic = 0.0;
+    data.roughness = 0.5;
+    data.emissive = Color(2, 3, 4);
+    data.emissive_texture = 0;
+
+    Material* mat = add_loaded_material(mesh, data, scene);
+    auto* pbr = dynamic_cast<PBR*>(mat);
+    check(pbr != nullptr, "GLB PBR material with emissiveTexture should preserve PBR shading");
+    check(!mat->is_emissive(), "GLB PBR material with emissiveTexture should not become a pure area light");
+    if (pbr) {
+        HitRecord rec;
+        rec.u = 0.0;
+        rec.v = 0.0;
+        rec.p = Point3(0, 0, 0);
+        check(near_vec(pbr->base_color(rec), Color(0.8, 0.7, 0.6), 1e-6),
+              "GLB PBR material should keep its base color while adding emission");
+        check(near_vec(pbr->emitted(rec),
+                       Color(2 * 64.0 / 255.0, 3 * 128.0 / 255.0, 4 * 192.0 / 255.0), 1e-6),
+              "GLB emissiveTexture should modulate emissiveFactor");
+    }
+}
+
+void test_loaded_glb_volume_attenuation_reaches_dielectric() {
+    Scene scene;
+    ObjMeshData mesh;
+    LoadedMaterialData data;
+    data.transmission = 1.0;
+    data.albedo = Color(1, 1, 1);
+    data.ior = 1.4;
+    data.roughness = 0.42;
+    data.attenuation_color = Color(0.25, 0.5, 1.0);
+    data.attenuation_distance = 2.0;
+
+    Material* mat = add_loaded_material(mesh, data, scene);
+    auto* dielectric = dynamic_cast<Dielectric*>(mat);
+    check(dielectric != nullptr, "GLB transmission material should route to Dielectric");
+    if (dielectric) {
+        HitRecord rec;
+        rec.p = Point3(0, 0, 0);
+        rec.normal = Vec3(0, 1, 0);
+        rec.front_face = false;
+        rec.t = 2.0;
+        Color attenuation, emission;
+        Ray scattered;
+        // With medium tracking, Beer-Lambert is driven by the ray's current
+        // medium, not by rec.front_face.  Simulate a ray already inside the
+        // dielectric volume by tagging the incoming ray with the medium.
+        Ray inside(Point3(0, 0, 0), Vec3(0, 1, 0));
+        inside.medium_color = Color(0.25, 0.5, 1.0);
+        inside.medium_attenuation_distance = 2.0;
+        dielectric->scatter(inside, rec, attenuation, scattered, emission);
+        check(near_vec(attenuation, Color(0.25, 0.5, 1.0), 1e-6),
+              "GLB KHR_materials_volume attenuation should affect dielectric attenuation inside the medium");
+        check(near(dielectric->roughness, 0.42),
+              "GLB transmission material should preserve roughness for rough glass");
+    }
+}
+
+void test_glb_transparency_texture_and_volume_thickness_parse() {
+    JsonValue material;
+    material.type = JsonValue::Object;
+    JsonValue extensions;
+    extensions.type = JsonValue::Object;
+
+    JsonValue transmission;
+    transmission.type = JsonValue::Object;
+    transmission.objVal["transmissionFactor"] = number(0.25);
+    JsonValue transmission_texture;
+    transmission_texture.type = JsonValue::Object;
+    transmission_texture.objVal["index"] = number(2);
+    transmission.objVal["transmissionTexture"] = transmission_texture;
+    extensions.objVal["KHR_materials_transmission"] = transmission;
+
+    JsonValue volume;
+    volume.type = JsonValue::Object;
+    volume.objVal["thicknessFactor"] = number(3.0);
+    JsonValue thickness_texture;
+    thickness_texture.type = JsonValue::Object;
+    thickness_texture.objVal["index"] = number(4);
+    volume.objVal["thicknessTexture"] = thickness_texture;
+    extensions.objVal["KHR_materials_volume"] = volume;
+
+    material.objVal["extensions"] = extensions;
+    material.objVal["alphaMode"] = string_value("MASK");
+    material.objVal["alphaCutoff"] = number(0.4);
+
+    LoadedMaterialData data = glb_material_data(material);
+    check(near(data.transmission, 0.25), "GLB transmissionFactor should parse");
+    check(data.transmission_texture == 2, "GLB transmissionTexture should parse");
+    check(near(data.thickness_factor, 3.0), "GLB KHR_materials_volume thicknessFactor should parse");
+    check(data.thickness_texture == 4, "GLB KHR_materials_volume thicknessTexture should parse");
+    check(data.alpha_mask && near(data.alpha_cutoff, 0.4),
+          "GLB alphaMode MASK and alphaCutoff should parse");
+}
+
+void test_json_dielectric_accepts_volume_attenuation() {
+    Scene scene;
+    JsonValue material;
+    material.type = JsonValue::Object;
+    material.objVal["type"] = string_value("dielectric");
+    material.objVal["ior"] = number(1.333);
+    material.objVal["albedo"] = array3(1.0, 1.0, 1.0);
+    material.objVal["roughness"] = number(0.35);
+    material.objVal["attenuation_color"] = array3(0.4, 0.7, 1.0);
+    material.objVal["attenuation_distance"] = number(3.0);
+
+    Material* mat = parse_material(material, scene);
+    auto* dielectric = dynamic_cast<Dielectric*>(mat);
+    check(dielectric != nullptr, "JSON dielectric material should parse attenuation fields");
+    if (dielectric) {
+        HitRecord rec;
+        rec.p = Point3(0, 0, 0);
+        rec.normal = Vec3(0, 1, 0);
+        rec.front_face = false;
+        rec.t = 3.0;
+        Color attenuation, emission;
+        Ray scattered;
+        // Medium tracking: the incoming ray carries the dielectric's volume
+        // parameters; Beer-Lambert is evaluated against rec.t.
+        Ray inside(Point3(0, 0, 0), Vec3(0, 1, 0));
+        inside.medium_color = Color(0.4, 0.7, 1.0);
+        inside.medium_attenuation_distance = 3.0;
+        dielectric->scatter(inside, rec, attenuation, scattered, emission);
+        check(near_vec(attenuation, Color(0.4, 0.7, 1.0), 1e-6),
+              "JSON dielectric attenuation should tint rays exiting the medium");
+        check(near(dielectric->roughness, 0.35),
+              "JSON dielectric roughness should be parsed for rough transmission");
+    }
+}
+
+void test_glb_texture_transform_parses_scale_and_offset() {
+    JsonValue material;
+    material.type = JsonValue::Object;
+    JsonValue pbr;
+    pbr.type = JsonValue::Object;
+    JsonValue base_color_texture;
+    base_color_texture.type = JsonValue::Object;
+    base_color_texture.objVal["index"] = number(0);
+    JsonValue tex_exts;
+    tex_exts.type = JsonValue::Object;
+    JsonValue transform;
+    transform.type = JsonValue::Object;
+    transform.objVal["scale"] = array3(2.0, 0.5, 0.0);
+    transform.objVal["offset"] = array3(0.1, 0.2, 0.0);
+    tex_exts.objVal["KHR_texture_transform"] = transform;
+    base_color_texture.objVal["extensions"] = tex_exts;
+    pbr.objVal["baseColorTexture"] = base_color_texture;
+    material.objVal["pbrMetallicRoughness"] = pbr;
+
+    LoadedMaterialData data = glb_material_data(material);
+    check(data.base_color_transform.active, "KHR_texture_transform should activate");
+    check(near(data.base_color_transform.scale.x, 2.0) && near(data.base_color_transform.scale.y, 0.5),
+          "KHR_texture_transform scale should parse");
+    check(near(data.base_color_transform.offset.x, 0.1) && near(data.base_color_transform.offset.y, 0.2),
+          "KHR_texture_transform offset should parse");
+}
+
+void test_dielectric_partial_transmission_factor_stores() {
+    Dielectric d(1.5, Color(1.0, 1.0, 1.0));
+    d.transmission = 0.6;
+    check(near(d.transmission, 0.6), "Dielectric partial transmission factor should store");
+    check(d.is_transparent() && d.is_specular(), "Dielectric should report transparent and specular");
+}
+
+void test_material_alpha_mask_interface() {
+    Lambertian lamb(Color(0.5, 0.5, 0.5));
+    check(!lamb.is_alpha_masked(), "Lambertian default should not be alpha masked");
+    lamb.alpha_masked = true;
+    lamb.cutoff = 0.33;
+    check(lamb.is_alpha_masked() && near(lamb.alpha_cutoff(), 0.33),
+          "Lambertian alpha mask fields should expose via interface");
+
+    PBR pbr(std::make_shared<SolidColorTexture>(Color(0.5, 0.5, 0.5)), 0.5, 0.5);
+    check(!pbr.is_alpha_masked(), "PBR default should not be alpha masked");
+    pbr.alpha_masked = true;
+    pbr.cutoff = 0.5;
+    check(pbr.is_alpha_masked(), "PBR alpha mask should expose via interface");
+
+    Dielectric d(1.5);
+    d.double_sided = true;
+    check(d.is_double_sided(), "Dielectric double-sided should expose via interface");
+}
+
+void test_transformed_texture_applies_uv_scale_offset() {
+    auto solid = std::make_shared<SolidColorTexture>(Color(0.4, 0.6, 0.8));
+    TransformedTexture tex(solid, Vec2(2.0, 1.0), Vec2(0.5, 0.0));
+    Color c = tex.value(0.25, 0.5, Point3(0, 0, 0));
+    // u' = 0.25 * 2 + 0.5 = 1.0; v' = 0.5 * 1 + 0 = 0.5; solid ignores UV so color unchanged
+    check(near_vec(c, Color(0.4, 0.6, 0.8)), "TransformedTexture should pass through to wrapped texture");
+}
+
+void test_random_seed_repeats_sequence() {
+    set_random_seed(1234);
+    double a = random_double();
+    double b = random_double();
+    set_random_seed(1234);
+    check(near(a, random_double()), "first random sample should repeat after seed reset");
+    check(near(b, random_double()), "second random sample should repeat after seed reset");
+}
+
+void test_random_double_stays_in_unit_interval() {
+    set_random_seed(4321);
+    for (int i = 0; i < 1000; i++) {
+        double v = random_double();
+        check(v >= 0.0 && v < 1.0, "random_double should stay in [0, 1)");
+    }
+}
+
+void test_collect_emissive_objects_uses_only_emissive_mesh_triangles() {
+    Scene scene;
+
+    auto diffuse = std::make_unique<Lambertian>(Color(0.2, 0.2, 0.2));
+    Material* diffuse_ptr = diffuse.get();
+    scene.materials.push_back(std::move(diffuse));
+
+    auto emissive = std::make_unique<Emissive>(Color(4, 3, 2));
+    Material* emissive_ptr = emissive.get();
+    scene.materials.push_back(std::move(emissive));
+
+    auto mesh = std::make_unique<TriangleMesh>();
+    mesh->vertices = {
+        Point3(0, 0, 0), Point3(1, 0, 0), Point3(0, 1, 0),
+        Point3(0, 0, 1), Point3(0, 2, 1), Point3(2, 0, 1)
+    };
+    mesh->indices = {0, 1, 2, 3, 4, 5};
+    mesh->material_per_tri = {diffuse_ptr, emissive_ptr};
+
+    scene.primitives.add(mesh.get());
+    scene.objects.push_back(std::move(mesh));
+
+    collect_emissive_objects(scene);
+
+    check(scene.emissive_objects.size() == 1, "mixed mesh should create one emissive sampling subset");
+    if (!scene.emissive_objects.empty()) {
+        check(near(scene.emissive_objects[0].geometry->area(), 2.0),
+              "emissive mesh sampling area should exclude non-emissive triangles");
+        check(near_vec(scene.emissive_objects[0].emission, Color(4, 3, 2)),
+              "emissive mesh subset should keep the emissive material color");
+        check(near(scene.emissive_total_area, 2.0),
+              "scene should precompute total emissive sampling area");
+    }
+}
+
+void test_alpha_mask_hit_traces_past_discarded_surface() {
+    Scene scene;
+    scene.max_depth = 8;
+    scene.ambient_light = Color(0, 0, 0);
+    scene.lights.clear();
+    scene.environment.type = EnvironmentType::Solid;
+    scene.environment.color = Color(0, 0, 0);
+
+    auto mask = std::make_unique<Lambertian>(Color(0, 0, 0));
+    mask->alpha_masked = true;
+    mask->cutoff = 0.5;
+    Material* mask_ptr = mask.get();
+    scene.materials.push_back(std::move(mask));
+
+    auto glow = std::make_unique<Emissive>(Color(3, 1, 0.5));
+    Material* glow_ptr = glow.get();
+    scene.materials.push_back(std::move(glow));
+
+    auto front = std::make_unique<Sphere>(Point3(0, 0, -1.0), 0.45, mask_ptr);
+    scene.primitives.add(front.get());
+    scene.objects.push_back(std::move(front));
+
+    auto back = std::make_unique<Sphere>(Point3(0, 0, -2.0), 0.45, glow_ptr);
+    scene.primitives.add(back.get());
+    scene.objects.push_back(std::move(back));
+
+    scene.world = std::make_unique<LinearBVH>(scene.primitives.objects);
+    collect_emissive_objects(scene);
+
+    RenderOptions options;
+    Color c = ray_color(Ray(Point3(0, 0, 0), Vec3(0, 0, -1)), scene, scene.max_depth,
+                        options, infinity, false);
+
+    check(c.x > 2.5 && c.y > 0.8 && c.z > 0.4,
+          "alpha masked hits should continue tracing to geometry behind the discarded surface");
+}
+
+void test_alpha_masked_surfaces_do_not_cast_solid_shadows() {
+    Scene scene;
+    auto mask = std::make_unique<Lambertian>(Color(0, 0, 0));
+    mask->alpha_masked = true;
+    mask->cutoff = 0.5;
+    Material* mask_ptr = mask.get();
+    scene.materials.push_back(std::move(mask));
+
+    auto front = std::make_unique<Sphere>(Point3(0, 0, -1.0), 0.45, mask_ptr);
+    scene.primitives.add(front.get());
+    scene.objects.push_back(std::move(front));
+    scene.world = std::make_unique<LinearBVH>(scene.primitives.objects);
+
+    bool blocked = is_shadowed(*scene.world, Ray(Point3(0, 0, 0), Vec3(0, 0, -1)), 3.0);
+    check(!blocked, "alpha masked discarded hits should not cast solid direct-light shadows");
+}
+
+void test_mirror_glass_water_acceptance_scene_loads() {
+    Scene scene;
+    load_scene("scenes/mirror_glass_water.json", scene);
+
+    check(scene.width == 640 && scene.height == 360,
+          "mirror/glass/water acceptance scene should use preview-sized image settings");
+    check(scene.primitive_count >= 7,
+          "mirror/glass/water acceptance scene should load several primitives");
+    check(!scene.emissive_objects.empty(),
+          "mirror/glass/water acceptance scene should include at least one emissive area light");
+}
+
+void test_disk_light_parses_and_samples() {
+    JsonValue light_json;
+    light_json.type = JsonValue::Object;
+    light_json.objVal["type"] = string_value("disk");
+    light_json.objVal["position"] = array3(0.0, 3.0, 0.0);
+    light_json.objVal["direction"] = array3(0.0, -1.0, 0.0);
+    light_json.objVal["radius"] = number(0.5);
+    light_json.objVal["intensity"] = number(4.0);
+
+    Light light = parse_light(light_json);
+    check(light.type == LightType::Disk, "disk light should parse to LightType::Disk");
+    check(near(light.radius, 0.5), "disk light radius should parse");
+    check(near(light.intensity, 4.0), "disk light intensity should parse");
+    double area = light.area();
+    check(near(area, pi * 0.5 * 0.5), "disk light area should be pi*r^2");
+
+    // Sampling a point on the disk should stay within the disk radius.
+    Point3 p = sample_light_point(light, 0.5, 0.0);
+    Vec3 offset = p - light.position;
+    double horiz = std::sqrt(offset.x * offset.x + offset.z * offset.z);
+    check(horiz <= light.radius + 1e-6,
+          "disk light sample point should lie within the disk radius");
+
+    // The sample from below the disk should carry radiance and be non-delta.
+    LightSample s = sample_scene_light(light, Point3(0, 0, 0), 0.5, 0.5);
+    check(!s.is_delta, "disk light should be a non-delta (area) light");
+    check(s.radiance.length_squared() > 0, "disk light should emit positive radiance");
+}
+
+void test_dielectric_medium_tracking_applies_beer_lambert_on_exit() {
+    // A ray inside a dielectric should accumulate Beer-Lambert absorption
+    // based on the path length rec.t and the ray's current medium.  When the
+    // ray refracts out, the scattered ray's medium should reset to air.
+    Dielectric glass(1.5, Color(1, 1, 1));
+    glass.attenuation_color = Color(0.5, 0.7, 1.0);
+    glass.attenuation_distance = 1.0;
+
+    HitRecord rec;
+    rec.p = Point3(0, 0, -1.0);
+    rec.normal = Vec3(0, 0, 1);   // back face: ray exits the dielectric
+    rec.front_face = false;
+    rec.t = 1.0;                  // traveled 1.0 inside the medium
+
+    Ray inside(Point3(0, 0, 0), Vec3(0, 0, -1));
+    inside.medium_color = glass.attenuation_color;
+    inside.medium_attenuation_distance = glass.attenuation_distance;
+
+    // Beer-Lambert (attenuation_color^(rec.t/attenuation_distance)) is applied
+    // before the stochastic reflect/refract choice, so it is deterministic.
+    Color attenuation, emission;
+    Ray scattered;
+    bool refracted_out = false;
+    for (int attempt = 0; attempt < 64 && !refracted_out; attempt++) {
+        glass.scatter(inside, rec, attenuation, scattered, emission);
+        // Near-normal incidence: Fresnel ~0.04, so most attempts refract.
+        refracted_out = near_vec(scattered.medium_color, Color(1, 1, 1), 1e-6);
+    }
+
+    // attenuation = base_color(1,1,1) * (0.5, 0.7, 1.0)^1 = (0.5, 0.7, 1.0).
+    check(near_vec(attenuation, Color(0.5, 0.7, 1.0), 1e-4),
+          "Beer-Lambert should apply attenuation_color^(rec.t/attenuation_distance)");
+    check(refracted_out,
+          "at near-normal incidence the dielectric should eventually refract out");
+    // After refracting out (back face), the scattered ray should be in air.
+    check(near_vec(scattered.medium_color, Color(1, 1, 1), 1e-6) &&
+          !std::isfinite(scattered.medium_attenuation_distance),
+          "refracted-out ray should reset medium to air/vacuum");
+}
+
+void test_dielectric_medium_tracking_preserves_medium_on_reflection() {
+    // A ray inside the dielectric at a grazing angle triggers total internal
+    // reflection, which deterministically reflects and should preserve the
+    // incoming medium on the scattered ray.
+    Dielectric glass(1.5, Color(1, 1, 1));
+    glass.attenuation_color = Color(0.3, 0.5, 0.9);
+    glass.attenuation_distance = 2.0;
+
+    // Grazing angle (1.2 in y, -1 in z): cos_theta ~0.64, sin_theta ~0.77,
+    // ratio*sin_theta = 1.5*0.77 > 1.0 -> total internal reflection.
+    HitRecord rec;
+    rec.p = Point3(0, 0, -1.0);
+    rec.normal = Vec3(0, 0, 1);
+    rec.front_face = false;
+    rec.t = 1.5;
+
+    Ray inside(Point3(0, 0, 0), Vec3(0, 1.2, -1).normalized());
+    inside.medium_color = glass.attenuation_color;
+    inside.medium_attenuation_distance = glass.attenuation_distance;
+
+    Color attenuation, emission;
+    Ray scattered;
+    glass.scatter(inside, rec, attenuation, scattered, emission);
+
+    // Beer-Lambert for 1.5 / 2.0 = exponent 0.75.
+    double exp_val = 1.5 / 2.0;
+    Color expected(std::pow(0.3, exp_val), std::pow(0.5, exp_val), std::pow(0.9, exp_val));
+    check(near_vec(attenuation, expected, 1e-4),
+          "Beer-Lambert should apply for TIR segments using the incoming medium");
+    // TIR reflection should preserve the incoming medium on the scattered ray.
+    check(near_vec(scattered.medium_color, inside.medium_color, 1e-6) &&
+          near(scattered.medium_attenuation_distance, inside.medium_attenuation_distance, 1e-6),
+          "reflected ray should preserve the incoming dielectric medium");
+}
+
 }  // namespace
 
 int main() {
@@ -169,7 +924,39 @@ int main() {
     test_degenerate_triangle_uv_tangent_is_finite();
     test_degenerate_mesh_uv_tangent_is_finite();
     test_obj_loader_handles_mixed_missing_attributes();
+    test_obj_loader_reads_mtl_diffuse_and_texture();
+    test_obj_loader_reads_extended_mtl_fields();
+    test_obj_loader_reads_additional_texture_maps();
+    test_obj_loader_ignores_missing_mtl_file();
     test_triangle_mesh_exposes_internal_acceleration();
+    test_pbr_exposes_brdf_and_pdf_for_direct_lighting();
+    test_display_color_exposure_and_tone_mapping();
+    test_output_format_detection();
+    test_environment_solid_and_gradient_backgrounds();
+    test_extended_light_types_parse();
+    test_extended_light_sampling_outputs_radiance();
+    test_camera_focal_length_orbit_and_framing_fields();
+    test_scene_preset_and_render_block_are_accepted();
+    test_firefly_clamp_preserves_hue_by_scaling();
+    test_loaded_material_emissive_routes_to_emissive();
+    test_loaded_glb_pbr_uses_metallic_roughness_and_normal_textures();
+    test_loaded_glb_pbr_emissive_texture_preserves_surface_shading();
+    test_loaded_glb_volume_attenuation_reaches_dielectric();
+    test_glb_transparency_texture_and_volume_thickness_parse();
+    test_glb_texture_transform_parses_scale_and_offset();
+    test_dielectric_partial_transmission_factor_stores();
+    test_material_alpha_mask_interface();
+    test_transformed_texture_applies_uv_scale_offset();
+    test_json_dielectric_accepts_volume_attenuation();
+    test_random_seed_repeats_sequence();
+    test_random_double_stays_in_unit_interval();
+    test_collect_emissive_objects_uses_only_emissive_mesh_triangles();
+    test_alpha_mask_hit_traces_past_discarded_surface();
+    test_alpha_masked_surfaces_do_not_cast_solid_shadows();
+    test_mirror_glass_water_acceptance_scene_loads();
+    test_disk_light_parses_and_samples();
+    test_dielectric_medium_tracking_applies_beer_lambert_on_exit();
+    test_dielectric_medium_tracking_preserves_medium_on_reflection();
 
     if (failures != 0) {
         std::cerr << failures << " regression test(s) failed\n";

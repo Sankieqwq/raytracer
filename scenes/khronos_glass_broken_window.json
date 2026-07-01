@@ -1,0 +1,48 @@
+{
+    "image": {
+        "width": 640,
+        "height": 360,
+        "samples": 32,
+        "max_depth": 32,
+        "output": "khronos_glass_broken_window.png",
+        "tone_map": "aces",
+        "exposure": 1.0,
+        "firefly_clamp": 10.0
+    },
+    "scene": {
+        "preset": "studio_softbox"
+    },
+    "environment": {
+        "type": "gradient",
+        "top": [0.42, 0.55, 0.76],
+        "bottom": [0.92, 0.92, 0.88],
+        "intensity": 0.95
+    },
+    "camera": {
+        "auto": true,
+        "view": "front",
+        "vfov": 32,
+        "margin": 1.35,
+        "target_offset": [0, 0.05, 0]
+    },
+    "ground": {
+        "enabled": true,
+        "material": {
+            "type": "lambertian",
+            "albedo": [0.56, 0.56, 0.54]
+        }
+    },
+    "objects": [
+        {
+            "type": "mesh",
+            "file": "../models/khronos/GlassBrokenWindow.glb",
+            "auto_fit": true,
+            "fit_size": 3.0,
+            "override_material": false,
+            "material": {
+                "type": "lambertian",
+                "albedo": [0.7, 0.7, 0.7]
+            }
+        }
+    ]
+}

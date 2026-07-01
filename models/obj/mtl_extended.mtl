@@ -1,0 +1,17 @@
+newmtl glow
+Kd 0.1 0.2 0.3
+Ke 2.0 1.0 0.5
+map_Ke -s 1 1 1 ../../textures/mtl_test.ppm
+
+newmtl glassy
+Kd 0.8 0.9 1.0
+d 0.35
+Ni 1.45
+map_d ../../textures/mtl_test.ppm
+
+newmtl shiny
+Kd 0.6 0.6 0.6
+Ks 0.9 0.8 0.7
+Ns 250
+map_Ks ../../textures/mtl_test.ppm
+map_Ns ../../textures/mtl_test.ppm

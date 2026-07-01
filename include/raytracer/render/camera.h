@@ -11,7 +11,7 @@ public:
     Camera(Point3 lookfrom, Point3 lookat, Vec3 vup,
            double vfov_deg, double aspect,
            double aperture, double focus_dist)
-        : lookfrom_(lookfrom) {
+        : lookfrom_(lookfrom), lookat_(lookat), vfov_degrees_(vfov_deg) {
         double theta = degrees_to_radians(vfov_deg);
         double h = std::tan(theta / 2);
         double viewport_h = 2 * h;
@@ -38,10 +38,15 @@ public:
         return Ray(origin, dir);
     }
 
+    Point3 lookfrom() const { return lookfrom_; }
+    Point3 lookat() const { return lookat_; }
+    double vfov_degrees() const { return vfov_degrees_; }
+
 private:
-    Point3 lookfrom_, origin_, lower_left_;
+    Point3 lookfrom_, lookat_, origin_, lower_left_;
     Vec3 horizontal_, vertical_, u_, v_;
     double lens_radius_;
+    double vfov_degrees_;
 };
 
 #endif

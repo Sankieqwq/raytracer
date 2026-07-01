@@ -274,8 +274,33 @@ inline LoadedTextureData glb_texture_data(const GlbContext& glb,
 
 inline LoadedMaterialData glb_material_data(const JsonValue& material) {
     LoadedMaterialData data;
+    data.use_pbr = true;
     data.albedo = Color(1.0, 1.0, 1.0);
+    data.metallic = 1.0;
+    data.roughness = 1.0;
     if (material.has("name")) data.name = material.at("name").strVal;
+
+    // Parse a KHR_texture_transform block attached to a texture reference.
+    auto parse_transform = [](const JsonValue& tex_ref, TextureTransform& out) {
+        if (!tex_ref.has("extensions")) return;
+        const JsonValue& exts = tex_ref.at("extensions");
+        if (!exts.has("KHR_texture_transform")) return;
+        const JsonValue& tr = exts.at("KHR_texture_transform");
+        if (tr.has("scale")) {
+            const auto& s = tr.at("scale").arrVal;
+            if (s.size() >= 2) {
+                out.scale = Vec2(s[0].numVal, s[1].numVal);
+                out.active = true;
+            }
+        }
+        if (tr.has("offset")) {
+            const auto& o = tr.at("offset").arrVal;
+            if (o.size() >= 2) {
+                out.offset = Vec2(o[0].numVal, o[1].numVal);
+                out.active = true;
+            }
+        }
+    };
 
     if (material.has("pbrMetallicRoughness")) {
         const JsonValue& pbr = material.at("pbrMetallicRoughness");
@@ -290,12 +315,38 @@ inline LoadedMaterialData glb_material_data(const JsonValue& material) {
         data.roughness = json_double(pbr, "roughnessFactor", 1.0);
         if (pbr.has("baseColorTexture")) {
             data.base_color_texture = json_int(pbr.at("baseColorTexture"), "index", -1);
+            parse_transform(pbr.at("baseColorTexture"), data.base_color_transform);
+        }
+        if (pbr.has("metallicRoughnessTexture")) {
+            data.metallic_roughness_texture = json_int(pbr.at("metallicRoughnessTexture"), "index", -1);
+            parse_transform(pbr.at("metallicRoughnessTexture"), data.metallic_roughness_transform);
         }
     }
 
-    if (material.has("alphaMode") && material.at("alphaMode").strVal == "BLEND") {
-        data.alpha = data.alpha < 1.0 ? data.alpha : 0.5;
-        data.alpha_blend = true;
+    if (material.has("normalTexture")) {
+        data.normal_texture = json_int(material.at("normalTexture"), "index", -1);
+        parse_transform(material.at("normalTexture"), data.normal_transform);
+    }
+    if (material.has("emissiveFactor")) {
+        data.emissive = glb_to_vec3(material.at("emissiveFactor"));
+    }
+    if (material.has("emissiveTexture")) {
+        data.emissive_texture = json_int(material.at("emissiveTexture"), "index", -1);
+        parse_transform(material.at("emissiveTexture"), data.emissive_transform);
+    }
+    if (material.has("doubleSided")) {
+        data.double_sided = material.at("doubleSided").boolVal;
+    }
+
+    if (material.has("alphaMode")) {
+        const std::string& alpha_mode = material.at("alphaMode").strVal;
+        if (alpha_mode == "BLEND") {
+            data.alpha = data.alpha < 1.0 ? data.alpha : 0.5;
+            data.alpha_blend = true;
+        } else if (alpha_mode == "MASK") {
+            data.alpha_mask = true;
+            data.alpha_cutoff = json_double(material, "alphaCutoff", 0.5);
+        }
     }
 
     if (material.has("extensions")) {
@@ -303,18 +354,23 @@ inline LoadedMaterialData glb_material_data(const JsonValue& material) {
         if (exts.has("KHR_materials_transmission")) {
             const JsonValue& tr = exts.at("KHR_materials_transmission");
             data.transmission = json_double(tr, "transmissionFactor", 0.0);
+            if (tr.has("transmissionTexture")) {
+                data.transmission_texture = json_int(tr.at("transmissionTexture"), "index", -1);
+                parse_transform(tr.at("transmissionTexture"), data.transmission_transform);
+            }
         }
         if (exts.has("KHR_materials_ior")) {
             const JsonValue& ior_ext = exts.at("KHR_materials_ior");
             data.ior = json_double(ior_ext, "ior", 1.5);
         }
         if (exts.has("KHR_materials_volume")) {
-            const JsonValue& vol = exts.at("KHR_materials_volume");
-            data.attenuation_distance = json_double(vol, "attenuationDistance", 0.0);
-            if (vol.has("attenuationColor")) {
-                const auto& ac = vol.at("attenuationColor").arrVal;
-                if (ac.size() >= 3)
-                    data.attenuation_color = Color(ac[0].numVal, ac[1].numVal, ac[2].numVal);
+            const JsonValue& volume = exts.at("KHR_materials_volume");
+            if (volume.has("attenuationColor")) data.attenuation_color = glb_to_vec3(volume.at("attenuationColor"));
+            if (volume.has("attenuationDistance")) data.attenuation_distance = volume.at("attenuationDistance").numVal;
+            data.thickness_factor = json_double(volume, "thicknessFactor", 0.0);
+            if (volume.has("thicknessTexture")) {
+                data.thickness_texture = json_int(volume.at("thicknessTexture"), "index", -1);
+                parse_transform(volume.at("thicknessTexture"), data.thickness_transform);
             }
         }
     }
