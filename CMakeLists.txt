@@ -11,6 +11,16 @@ target_include_directories(raytracer SYSTEM PRIVATE third_party)
 
 target_compile_options(raytracer PRIVATE -O2 -Wall -Wextra)
 
+add_executable(raytracer_blender_bridge src/blender_bridge.cpp)
+target_include_directories(raytracer_blender_bridge PRIVATE include)
+target_include_directories(raytracer_blender_bridge SYSTEM PRIVATE third_party)
+target_compile_options(raytracer_blender_bridge PRIVATE -O2 -Wall -Wextra)
+
+add_executable(raytracer_server src/remote_server.cpp)
+target_include_directories(raytracer_server PRIVATE include)
+target_include_directories(raytracer_server SYSTEM PRIVATE third_party)
+target_compile_options(raytracer_server PRIVATE -O2 -Wall -Wextra)
+
 enable_testing()
 
 add_executable(raytracer_regression_tests tests/regression_tests.cpp)

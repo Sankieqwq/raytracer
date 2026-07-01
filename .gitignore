@@ -1,13 +1,21 @@
 # Build
 build/
-./raytracer
 
 # Render output
 *.ppm
 *.png
+*.log
+*.rgba32f
+
+# Local debug/cache output
+debug/
 
 # executable
 /raytracer
+/raytracer_blender_bridge
+/raytracer_server
+__pycache__/
+*.pyc
 
 # IDE
 .vscode/
