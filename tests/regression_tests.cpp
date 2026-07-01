@@ -201,6 +201,22 @@ void test_obj_loader_reads_extended_mtl_fields() {
     }
 }
 
+void test_obj_loader_reads_additional_texture_maps() {
+    ObjMeshData mesh = load_model_mesh("models/obj/mtl_extended.obj");
+    const LoadedMaterialData* glassy = find_loaded_material(mesh, "glassy");
+    check(glassy != nullptr, "extended OBJ MTL should load glassy material");
+    if (glassy) {
+        check(glassy->alpha_texture >= 0, "OBJ MTL map_d should map to alpha texture");
+    }
+
+    const LoadedMaterialData* shiny = find_loaded_material(mesh, "shiny");
+    check(shiny != nullptr, "extended OBJ MTL should load shiny material");
+    if (shiny) {
+        check(shiny->specular_texture >= 0, "OBJ MTL map_Ks should map to specular texture");
+        check(shiny->shininess_texture >= 0, "OBJ MTL map_Ns should map to shininess texture");
+    }
+}
+
 void test_obj_loader_ignores_missing_mtl_file() {
     try {
         ObjMeshData mesh = load_model_mesh("models/obj/mark.obj");
@@ -271,6 +287,164 @@ void test_output_format_detection() {
           "png extension should select PNG output");
     check(output_format_for_path("image.unknown") == ImageOutputFormat::PPM,
           "unknown extension should preserve old PPM behavior");
+}
+
+void test_environment_solid_and_gradient_backgrounds() {
+    {
+        std::ofstream out("/tmp/rt_environment_solid.json");
+        out << "{"
+            << "\"image\":{\"width\":16,\"height\":8},"
+            << "\"environment\":{\"type\":\"solid\",\"color\":[0.2,0.3,0.4],\"intensity\":2.0},"
+            << "\"objects\":[]"
+            << "}";
+    }
+    Scene solid_scene;
+    load_scene("/tmp/rt_environment_solid.json", solid_scene);
+    check(solid_scene.environment.type == EnvironmentType::Solid,
+          "environment.type solid should select solid background");
+    check(near_vec(scene_background(solid_scene, Ray(Point3(0, 0, 0), Vec3(0, 1, 0))),
+                   Color(0.4, 0.6, 0.8)),
+          "solid environment should return color multiplied by intensity");
+
+    {
+        std::ofstream out("/tmp/rt_environment_gradient.json");
+        out << "{"
+            << "\"image\":{\"width\":16,\"height\":8},"
+            << "\"environment\":{\"type\":\"gradient\",\"top\":[0.0,0.0,1.0],\"bottom\":[1.0,1.0,1.0]},"
+            << "\"objects\":[]"
+            << "}";
+    }
+    Scene gradient_scene;
+    load_scene("/tmp/rt_environment_gradient.json", gradient_scene);
+    Color up = scene_background(gradient_scene, Ray(Point3(0, 0, 0), Vec3(0, 1, 0)));
+    Color down = scene_background(gradient_scene, Ray(Point3(0, 0, 0), Vec3(0, -1, 0)));
+    check(down.x > up.x && down.y > up.y,
+          "gradient environment should vary with ray direction");
+}
+
+void test_extended_light_types_parse() {
+    JsonValue rect;
+    rect.type = JsonValue::Object;
+    rect.objVal["type"] = string_value("rect");
+    rect.objVal["position"] = array3(0, 3, 0);
+    rect.objVal["u"] = array3(2, 0, 0);
+    rect.objVal["v"] = array3(0, 0, 1);
+    Light rect_light = parse_light(rect);
+    check(rect_light.type == LightType::Rect, "rect light should parse as rectangular area light");
+    check(near(rect_light.area(), 2.0), "rect light area should come from u cross v");
+
+    JsonValue sphere;
+    sphere.type = JsonValue::Object;
+    sphere.objVal["type"] = string_value("sphere");
+    sphere.objVal["position"] = array3(1, 2, 3);
+    sphere.objVal["radius"] = number(0.5);
+    Light sphere_light = parse_light(sphere);
+    check(sphere_light.type == LightType::Sphere, "sphere light should parse as spherical area light");
+    check(near(sphere_light.radius, 0.5), "sphere light should store radius");
+
+    JsonValue spot;
+    spot.type = JsonValue::Object;
+    spot.objVal["type"] = string_value("spot");
+    spot.objVal["position"] = array3(0, 3, 0);
+    spot.objVal["direction"] = array3(0, -1, 0);
+    spot.objVal["angle"] = number(20.0);
+    Light spot_light = parse_light(spot);
+    check(spot_light.type == LightType::Spot, "spot light should parse as spot light");
+    check(near(spot_light.angle, 20.0), "spot light should store cone angle");
+}
+
+void test_extended_light_sampling_outputs_radiance() {
+    JsonValue rect;
+    rect.type = JsonValue::Object;
+    rect.objVal["type"] = string_value("rect");
+    rect.objVal["position"] = array3(0, 2, 0);
+    rect.objVal["direction"] = array3(0, -1, 0);
+    rect.objVal["u"] = array3(2, 0, 0);
+    rect.objVal["v"] = array3(0, 0, 2);
+    rect.objVal["intensity"] = number(4.0);
+    Light rect_light = parse_light(rect);
+    LightSample rect_sample = sample_scene_light(rect_light, Point3(0, 0, 0), 0.5, 0.5);
+    check(rect_sample.radiance.x > 0.0 && near(rect_sample.distance, 2.0),
+          "rect light sampling should produce finite positive direct radiance");
+
+    JsonValue spot;
+    spot.type = JsonValue::Object;
+    spot.objVal["type"] = string_value("spot");
+    spot.objVal["position"] = array3(0, 2, 0);
+    spot.objVal["direction"] = array3(0, -1, 0);
+    spot.objVal["angle"] = number(10.0);
+    Light spot_light = parse_light(spot);
+    check(sample_scene_light(spot_light, Point3(0, 0, 0)).radiance.x > 0.0,
+          "spot light should illuminate points inside its cone");
+    check(sample_scene_light(spot_light, Point3(2, 0, 0)).radiance.length_squared() == 0.0,
+          "spot light should reject points outside its cone");
+}
+
+void test_camera_focal_length_orbit_and_framing_fields() {
+    {
+        std::ofstream out("/tmp/rt_camera_focal.json");
+        out << "{"
+            << "\"image\":{\"width\":100,\"height\":100},"
+            << "\"camera\":{\"lookfrom\":[0,0,5],\"lookat\":[0,0,0],\"focal_length\":50,\"sensor_height\":50},"
+            << "\"objects\":[]"
+            << "}";
+    }
+    Scene focal_scene;
+    load_scene("/tmp/rt_camera_focal.json", focal_scene);
+    check(near(focal_scene.camera->vfov_degrees(), 53.13010235415598, 1e-6),
+          "camera focal_length/sensor_height should derive vertical FOV");
+
+    {
+        std::ofstream out("/tmp/rt_camera_orbit.json");
+        out << "{"
+            << "\"image\":{\"width\":100,\"height\":100},"
+            << "\"camera\":{\"orbit\":{\"target\":[0,1,0],\"yaw\":0,\"pitch\":0,\"distance\":4}},"
+            << "\"objects\":[]"
+            << "}";
+    }
+    Scene orbit_scene;
+    load_scene("/tmp/rt_camera_orbit.json", orbit_scene);
+    check(near_vec(orbit_scene.camera->lookfrom(), Point3(0, 1, 4), 1e-6),
+          "camera orbit should derive lookfrom from target/yaw/pitch/distance");
+
+    {
+        std::ofstream out("/tmp/rt_camera_auto_view.json");
+        out << "{"
+            << "\"image\":{\"width\":100,\"height\":100},"
+            << "\"camera\":{\"auto\":true,\"view\":\"front\",\"margin\":2.0,\"target_offset\":[0,1,0]},"
+            << "\"objects\":[{\"type\":\"sphere\",\"center\":[0,0,0],\"radius\":1,\"material\":{\"type\":\"lambertian\",\"albedo\":[1,1,1]}}]"
+            << "}";
+    }
+    Scene auto_scene;
+    load_scene("/tmp/rt_camera_auto_view.json", auto_scene);
+    check(auto_scene.camera->lookfrom().z > 2.0 && auto_scene.camera->lookat().y > 0.5,
+          "auto camera should honor view, margin, and target_offset");
+}
+
+void test_scene_preset_and_render_block_are_accepted() {
+    std::ofstream out("/tmp/rt_scene_preset.json");
+    out << "{"
+        << "\"render\":{\"width\":48,\"height\":24,\"samples\":3,\"max_depth\":7,\"firefly_clamp\":4.0},"
+        << "\"scene\":{\"preset\":\"studio_softbox\"},"
+        << "\"objects\":[{\"type\":\"sphere\",\"center\":[0,0,0],\"radius\":1,\"material\":{\"type\":\"lambertian\",\"albedo\":[1,1,1]}}]"
+        << "}";
+    out.close();
+
+    Scene scene;
+    load_scene("/tmp/rt_scene_preset.json", scene);
+    check(scene.width == 48 && scene.height == 24 && scene.samples == 3 && scene.max_depth == 7,
+          "render block should be accepted as an image alias");
+    check(near(scene.firefly_clamp, 4.0), "render.firefly_clamp should be parsed");
+    bool has_rect = false;
+    for (const Light& light : scene.lights) has_rect = has_rect || light.type == LightType::Rect;
+    check(has_rect, "studio_softbox preset should add a rectangular softbox light");
+}
+
+void test_firefly_clamp_preserves_hue_by_scaling() {
+    check(near_vec(clamp_radiance(Color(10, 4, 2), 5.0), Color(5, 2, 1)),
+          "firefly clamp should scale radiance instead of clipping channels independently");
+    check(near_vec(clamp_radiance(Color(1, 2, 3), infinity), Color(1, 2, 3)),
+          "infinite firefly clamp should leave radiance unchanged");
 }
 
 void test_loaded_material_emissive_routes_to_emissive() {
@@ -356,6 +530,7 @@ void test_loaded_glb_volume_attenuation_reaches_dielectric() {
     data.transmission = 1.0;
     data.albedo = Color(1, 1, 1);
     data.ior = 1.4;
+    data.roughness = 0.42;
     data.attenuation_color = Color(0.25, 0.5, 1.0);
     data.attenuation_distance = 2.0;
 
@@ -373,7 +548,46 @@ void test_loaded_glb_volume_attenuation_reaches_dielectric() {
         dielectric->scatter(Ray(Point3(0, 0, 0), Vec3(0, 1, 0)), rec, attenuation, scattered, emission);
         check(near_vec(attenuation, Color(0.25, 0.5, 1.0), 1e-6),
               "GLB KHR_materials_volume attenuation should affect dielectric attenuation inside the medium");
+        check(near(dielectric->roughness, 0.42),
+              "GLB transmission material should preserve roughness for rough glass");
     }
+}
+
+void test_glb_transparency_texture_and_volume_thickness_parse() {
+    JsonValue material;
+    material.type = JsonValue::Object;
+    JsonValue extensions;
+    extensions.type = JsonValue::Object;
+
+    JsonValue transmission;
+    transmission.type = JsonValue::Object;
+    transmission.objVal["transmissionFactor"] = number(0.25);
+    JsonValue transmission_texture;
+    transmission_texture.type = JsonValue::Object;
+    transmission_texture.objVal["index"] = number(2);
+    transmission.objVal["transmissionTexture"] = transmission_texture;
+    extensions.objVal["KHR_materials_transmission"] = transmission;
+
+    JsonValue volume;
+    volume.type = JsonValue::Object;
+    volume.objVal["thicknessFactor"] = number(3.0);
+    JsonValue thickness_texture;
+    thickness_texture.type = JsonValue::Object;
+    thickness_texture.objVal["index"] = number(4);
+    volume.objVal["thicknessTexture"] = thickness_texture;
+    extensions.objVal["KHR_materials_volume"] = volume;
+
+    material.objVal["extensions"] = extensions;
+    material.objVal["alphaMode"] = string_value("MASK");
+    material.objVal["alphaCutoff"] = number(0.4);
+
+    LoadedMaterialData data = glb_material_data(material);
+    check(near(data.transmission, 0.25), "GLB transmissionFactor should parse");
+    check(data.transmission_texture == 2, "GLB transmissionTexture should parse");
+    check(near(data.thickness_factor, 3.0), "GLB KHR_materials_volume thicknessFactor should parse");
+    check(data.thickness_texture == 4, "GLB KHR_materials_volume thicknessTexture should parse");
+    check(data.alpha_mask && near(data.alpha_cutoff, 0.4),
+          "GLB alphaMode MASK and alphaCutoff should parse");
 }
 
 void test_json_dielectric_accepts_volume_attenuation() {
@@ -383,6 +597,7 @@ void test_json_dielectric_accepts_volume_attenuation() {
     material.objVal["type"] = string_value("dielectric");
     material.objVal["ior"] = number(1.333);
     material.objVal["albedo"] = array3(1.0, 1.0, 1.0);
+    material.objVal["roughness"] = number(0.35);
     material.objVal["attenuation_color"] = array3(0.4, 0.7, 1.0);
     material.objVal["attenuation_distance"] = number(3.0);
 
@@ -400,6 +615,8 @@ void test_json_dielectric_accepts_volume_attenuation() {
         dielectric->scatter(Ray(Point3(0, 0, 0), Vec3(0, 1, 0)), rec, attenuation, scattered, emission);
         check(near_vec(attenuation, Color(0.4, 0.7, 1.0), 1e-6),
               "JSON dielectric attenuation should tint rays exiting the medium");
+        check(near(dielectric->roughness, 0.35),
+              "JSON dielectric roughness should be parsed for rough transmission");
     }
 }
 
@@ -478,15 +695,23 @@ int main() {
     test_obj_loader_handles_mixed_missing_attributes();
     test_obj_loader_reads_mtl_diffuse_and_texture();
     test_obj_loader_reads_extended_mtl_fields();
+    test_obj_loader_reads_additional_texture_maps();
     test_obj_loader_ignores_missing_mtl_file();
     test_triangle_mesh_exposes_internal_acceleration();
     test_pbr_exposes_brdf_and_pdf_for_direct_lighting();
     test_display_color_exposure_and_tone_mapping();
     test_output_format_detection();
+    test_environment_solid_and_gradient_backgrounds();
+    test_extended_light_types_parse();
+    test_extended_light_sampling_outputs_radiance();
+    test_camera_focal_length_orbit_and_framing_fields();
+    test_scene_preset_and_render_block_are_accepted();
+    test_firefly_clamp_preserves_hue_by_scaling();
     test_loaded_material_emissive_routes_to_emissive();
     test_loaded_glb_pbr_uses_metallic_roughness_and_normal_textures();
     test_loaded_glb_pbr_emissive_texture_preserves_surface_shading();
     test_loaded_glb_volume_attenuation_reaches_dielectric();
+    test_glb_transparency_texture_and_volume_thickness_parse();
     test_json_dielectric_accepts_volume_attenuation();
     test_random_seed_repeats_sequence();
     test_random_double_stays_in_unit_interval();

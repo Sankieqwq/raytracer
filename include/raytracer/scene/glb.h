@@ -312,9 +312,15 @@ inline LoadedMaterialData glb_material_data(const JsonValue& material) {
         data.double_sided = material.at("doubleSided").boolVal;
     }
 
-    if (material.has("alphaMode") && material.at("alphaMode").strVal == "BLEND") {
-        data.alpha = data.alpha < 1.0 ? data.alpha : 0.5;
-        data.alpha_blend = true;
+    if (material.has("alphaMode")) {
+        const std::string& alpha_mode = material.at("alphaMode").strVal;
+        if (alpha_mode == "BLEND") {
+            data.alpha = data.alpha < 1.0 ? data.alpha : 0.5;
+            data.alpha_blend = true;
+        } else if (alpha_mode == "MASK") {
+            data.alpha_mask = true;
+            data.alpha_cutoff = json_double(material, "alphaCutoff", 0.5);
+        }
     }
 
     if (material.has("extensions")) {
@@ -322,6 +328,9 @@ inline LoadedMaterialData glb_material_data(const JsonValue& material) {
         if (exts.has("KHR_materials_transmission")) {
             const JsonValue& tr = exts.at("KHR_materials_transmission");
             data.transmission = json_double(tr, "transmissionFactor", 0.0);
+            if (tr.has("transmissionTexture")) {
+                data.transmission_texture = json_int(tr.at("transmissionTexture"), "index", -1);
+            }
         }
         if (exts.has("KHR_materials_ior")) {
             const JsonValue& ior_ext = exts.at("KHR_materials_ior");
@@ -331,6 +340,10 @@ inline LoadedMaterialData glb_material_data(const JsonValue& material) {
             const JsonValue& volume = exts.at("KHR_materials_volume");
             if (volume.has("attenuationColor")) data.attenuation_color = glb_to_vec3(volume.at("attenuationColor"));
             if (volume.has("attenuationDistance")) data.attenuation_distance = volume.at("attenuationDistance").numVal;
+            data.thickness_factor = json_double(volume, "thicknessFactor", 0.0);
+            if (volume.has("thicknessTexture")) {
+                data.thickness_texture = json_int(volume.at("thicknessTexture"), "index", -1);
+            }
         }
     }
 

@@ -44,13 +44,21 @@ struct LoadedMaterialData {
     int base_color_texture = -1;
     int metallic_roughness_texture = -1;
     int normal_texture = -1;
+    int alpha_texture = -1;
+    int specular_texture = -1;
+    int shininess_texture = -1;
     Color emissive = Color(0, 0, 0);
     int emissive_texture = -1;
     bool double_sided = false;
     Color attenuation_color = Color(1, 1, 1);
     double attenuation_distance = infinity;
     bool alpha_blend = false;       // alphaMode == "BLEND"
+    bool alpha_mask = false;        // alphaMode == "MASK"
+    double alpha_cutoff = 0.5;
     double transmission = 0.0;      // KHR_materials_transmission
+    int transmission_texture = -1;
+    double thickness_factor = 0.0;  // KHR_materials_volume
+    int thickness_texture = -1;
     double ior = 1.5;               // KHR_materials_ior (glTF default)
 };
 
@@ -229,6 +237,24 @@ inline void load_obj_mtl_file(const std::filesystem::path& obj_dir,
             std::string texture_name = read_mtl_texture_path(iss);
             if (!texture_name.empty()) {
                 current->base_color_texture = add_mtl_texture(mesh, mtl_dir, texture_name);
+            }
+        } else if (tag == "map_d" && current) {
+            std::string texture_name = read_mtl_texture_path(iss);
+            if (!texture_name.empty()) {
+                current->alpha_texture = add_mtl_texture(mesh, mtl_dir, texture_name);
+                current->alpha_blend = true;
+            }
+        } else if (tag == "map_Ks" && current) {
+            std::string texture_name = read_mtl_texture_path(iss);
+            if (!texture_name.empty()) {
+                current->specular_texture = add_mtl_texture(mesh, mtl_dir, texture_name);
+                current->use_pbr = true;
+            }
+        } else if (tag == "map_Ns" && current) {
+            std::string texture_name = read_mtl_texture_path(iss);
+            if (!texture_name.empty()) {
+                current->shininess_texture = add_mtl_texture(mesh, mtl_dir, texture_name);
+                current->use_pbr = true;
             }
         } else if (tag == "map_Ke" && current) {
             std::string texture_name = read_mtl_texture_path(iss);

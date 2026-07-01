@@ -111,6 +111,7 @@ public:
     std::shared_ptr<Texture> albedo_texture;
     Color attenuation_color = Color(1, 1, 1);
     double attenuation_distance = infinity;
+    double roughness = 0.0;
 
     explicit Dielectric(double index_of_refraction, Color albedo = Color(1.0, 1.0, 1.0))
         : ior(index_of_refraction), albedo(albedo) {}
@@ -141,6 +142,15 @@ public:
             dir = reflect(unit_dir, rec.normal);
         else
             dir = refract(unit_dir, rec.normal, ratio);
+
+        double rough = std::clamp(roughness, 0.0, 1.0);
+        if (rough > 0.0) {
+            Vec3 rough_dir = dir + (rough * rough) * random_in_unit_sphere();
+            if (rough_dir.length_squared() > 1e-12 &&
+                dot(rough_dir, rec.normal) * dot(dir, rec.normal) >= 0.0) {
+                dir = rough_dir.normalized();
+            }
+        }
 
         scattered = Ray(rec.p, dir);
         return true;

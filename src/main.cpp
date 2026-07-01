@@ -50,21 +50,16 @@ Color direct_delta_lights(const Ray& r_in, const HitRecord& rec, const Scene& sc
     Color result = base * scene.ambient_light;
 
     for (const Light& light : scene.lights) {
-        Vec3 light_dir;
-        double max_t = infinity;
-        double attenuation = 1.0;
-
-        if (light.type == LightType::Point) {
-            Vec3 to_light = light.position - rec.p;
-            double dist2 = to_light.length_squared();
-            if (dist2 <= 1e-8) continue;
-            double dist = std::sqrt(dist2);
-            light_dir = to_light / dist;
-            max_t = dist - 0.001;
-            attenuation = 1.0 / dist2;
-        } else {
-            light_dir = (-light.direction).normalized();
+        double r1 = 0.5;
+        double r2 = 0.5;
+        if (light.type == LightType::Sphere || light.type == LightType::Rect) {
+            r1 = random_double();
+            r2 = random_double();
         }
+        LightSample sample = sample_scene_light(light, rec.p, r1, r2);
+        if (sample.radiance.length_squared() <= 0) continue;
+        Vec3 light_dir = sample.direction;
+        double max_t = std::isfinite(sample.distance) ? sample.distance - 0.001 : infinity;
 
         double n_dot_l = dot(rec.normal, light_dir);
         if (n_dot_l <= 0) continue;
@@ -74,7 +69,7 @@ Color direct_delta_lights(const Ray& r_in, const HitRecord& rec, const Scene& sc
 
         Ray light_ray(rec.p, light_dir);
         Color brdf = rec.material ? rec.material->f(r_in, light_ray, rec) : base / pi;
-        result += brdf * light.color * (light.intensity * attenuation * n_dot_l);
+        result += brdf * sample.radiance * n_dot_l;
     }
 
     return result;
@@ -87,9 +82,7 @@ Color ray_color(const Ray& r, const Scene& scene, int depth,
 
     HitRecord rec;
     if (!scene.world->hit(r, 0.001, infinity, rec)) {
-        Vec3 unit_dir = r.direction.normalized();
-        double t = 0.5 * (unit_dir.y + 1.0);
-        return (1 - t) * Color(1.0, 1.0, 1.0) + t * Color(0.5, 0.7, 1.0);
+        return scene_background(scene, r);
     }
 
     if (rec.material && rec.material->is_emissive()) {
@@ -178,6 +171,7 @@ void print_usage(const char* prog) {
               << "  --exposure <n>     display exposure multiplier (default: scene/default 1.0)\n"
               << "  --tone-map <mode>  tone mapping: aces, reinhard, none\n"
               << "  --seed <n>         deterministic random seed (default: random_device)\n"
+              << "  --firefly-clamp <n> clamp per-sample radiance peak before accumulation\n"
               << "  --stats            print load/render timing and scene statistics\n"
               << "  --direct-only      disable recursive random bounces, use direct light + shadows only\n"
               << "  --preview          fast preview mode: direct-only and samples=1 unless overridden\n";
@@ -190,6 +184,7 @@ int main(int argc, char* argv[]) {
     std::string model_override;
     int samples_override = -1;
     double exposure_override = -1.0;
+    double firefly_clamp_override = -1.0;
     std::string tone_map_override;
     long long seed_override = -1;
     RenderOptions render_options;
@@ -217,6 +212,8 @@ int main(int argc, char* argv[]) {
             tone_map_override = argv[++i];
         } else if (arg == "--seed" && i + 1 < argc) {
             seed_override = std::stoll(argv[++i]);
+        } else if (arg == "--firefly-clamp" && i + 1 < argc) {
+            firefly_clamp_override = std::stod(argv[++i]);
         } else if (arg == "--stats") {
             render_options.stats = true;
         } else if (arg == "--direct-only") {
@@ -260,6 +257,7 @@ int main(int argc, char* argv[]) {
 
     if (!out_override.empty()) scene.output = out_override;
     if (exposure_override > 0) scene.output_options.exposure = exposure_override;
+    if (firefly_clamp_override > 0) scene.firefly_clamp = firefly_clamp_override;
     if (!tone_map_override.empty()) scene.output_options.tone_map = parse_tone_map_mode(tone_map_override);
     if (seed_override >= 0) {
         set_random_seed(static_cast<unsigned int>(seed_override));
@@ -307,7 +305,8 @@ int main(int argc, char* argv[]) {
                     double offset_y = (render_options.direct_only && scene.samples == 1) ? 0.5 : random_double();
                     double u = (i + offset_x) / (scene.width - 1);
                     double v = (sample_row + offset_y) / (scene.height - 1);
-                    col += ray_color(scene.camera->get_ray(u, v), scene, scene.max_depth, render_options, infinity, false);
+                    Color sample = ray_color(scene.camera->get_ray(u, v), scene, scene.max_depth, render_options, infinity, false);
+                    col += clamp_radiance(sample, scene.firefly_clamp);
                 }
                 pixels[j * scene.width + i] = col;
             }
