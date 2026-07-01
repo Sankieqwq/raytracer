@@ -29,6 +29,11 @@ enum class LightType {
     Directional
 };
 
+enum class BackgroundType {
+    Solid,
+    Sky
+};
+
 struct Light {
     LightType type = LightType::Directional;
     Point3 position;
@@ -56,6 +61,8 @@ struct Scene {
     bool has_mesh_bounds = false;
     AABB mesh_bounds;
     Color ambient_light = Color(0.04, 0.04, 0.04);
+    BackgroundType background_type = BackgroundType::Sky;
+    Color background_color = Color(0, 0, 0);
     std::vector<Light> lights;
     std::vector<EmissiveObject> emissive_objects;
 
@@ -301,6 +308,12 @@ inline std::vector<Light> default_lights() {
     fill.intensity = 5.0;
 
     return {sun, fill};
+}
+
+inline BackgroundType parse_background_type(const std::string& type) {
+    if (type == "sky") return BackgroundType::Sky;
+    if (type == "solid" || type == "color" || type == "black") return BackgroundType::Solid;
+    throw std::runtime_error("unknown background type: " + type);
 }
 
 struct LightSample {
@@ -616,6 +629,8 @@ inline void load_scene(const std::string& path,
     scene.primitive_count = 0;
     scene.has_mesh_bounds = false;
     scene.ambient_light = Color(0.04, 0.04, 0.04);
+    scene.background_type = BackgroundType::Sky;
+    scene.background_color = Color(0, 0, 0);
     scene.lights.clear();
 
     JsonValue root = parse_json_file(path);
@@ -635,6 +650,21 @@ inline void load_scene(const std::string& path,
     if (root.has("lighting")) {
         const JsonValue& lighting = root.at("lighting");
         if (lighting.has("ambient")) scene.ambient_light = to_vec3(lighting.at("ambient"));
+    }
+
+    if (root.has("background")) {
+        const JsonValue& background = root.at("background");
+        if (background.isArray()) {
+            scene.background_type = BackgroundType::Solid;
+            scene.background_color = to_vec3(background);
+        } else if (background.isObject()) {
+            if (background.has("type")) {
+                scene.background_type = parse_background_type(background.at("type").strVal);
+            }
+            if (background.has("color")) {
+                scene.background_color = to_vec3(background.at("color"));
+            }
+        }
     }
 
     if (root.has("lights")) {

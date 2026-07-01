@@ -167,6 +167,22 @@ public:
         return albedo->value(rec.u, rec.v, rec.p);
     }
 
+    Color f(const Ray& r_in, const Ray& scattered, const HitRecord& rec) const override {
+        (void)r_in;
+        double cos_theta = dot(rec.normal, scattered.direction.normalized());
+        if (cos_theta <= 0) return Color(0, 0, 0);
+        Color base = base_color(rec);
+        double met = metallic->value(rec.u, rec.v, rec.p).x;
+        met = std::clamp(met, 0.0, 1.0);
+        return (1 - met) * base / pi;
+    }
+
+    double pdf(const Ray& r_in, const Ray& scattered, const HitRecord& rec) const override {
+        (void)r_in;
+        double cos_theta = dot(rec.normal, scattered.direction.normalized());
+        return cos_theta > 0 ? cos_theta / pi : 0;
+    }
+
     bool scatter(const Ray& r_in, const HitRecord& rec,
                  Color& attenuation, Ray& scattered,
                  Color& emission) const override {
@@ -237,7 +253,7 @@ public:
         return true;
     }
 
-    bool is_specular() const override { return true; }
+    bool is_specular() const override { return false; }
 };
 
 // Emissive material (area light)
