@@ -620,6 +620,67 @@ void test_json_dielectric_accepts_volume_attenuation() {
     }
 }
 
+void test_glb_texture_transform_parses_scale_and_offset() {
+    JsonValue material;
+    material.type = JsonValue::Object;
+    JsonValue pbr;
+    pbr.type = JsonValue::Object;
+    JsonValue base_color_texture;
+    base_color_texture.type = JsonValue::Object;
+    base_color_texture.objVal["index"] = number(0);
+    JsonValue tex_exts;
+    tex_exts.type = JsonValue::Object;
+    JsonValue transform;
+    transform.type = JsonValue::Object;
+    transform.objVal["scale"] = array3(2.0, 0.5, 0.0);
+    transform.objVal["offset"] = array3(0.1, 0.2, 0.0);
+    tex_exts.objVal["KHR_texture_transform"] = transform;
+    base_color_texture.objVal["extensions"] = tex_exts;
+    pbr.objVal["baseColorTexture"] = base_color_texture;
+    material.objVal["pbrMetallicRoughness"] = pbr;
+
+    LoadedMaterialData data = glb_material_data(material);
+    check(data.base_color_transform.active, "KHR_texture_transform should activate");
+    check(near(data.base_color_transform.scale.x, 2.0) && near(data.base_color_transform.scale.y, 0.5),
+          "KHR_texture_transform scale should parse");
+    check(near(data.base_color_transform.offset.x, 0.1) && near(data.base_color_transform.offset.y, 0.2),
+          "KHR_texture_transform offset should parse");
+}
+
+void test_dielectric_partial_transmission_factor_stores() {
+    Dielectric d(1.5, Color(1.0, 1.0, 1.0));
+    d.transmission = 0.6;
+    check(near(d.transmission, 0.6), "Dielectric partial transmission factor should store");
+    check(d.is_transparent() && d.is_specular(), "Dielectric should report transparent and specular");
+}
+
+void test_material_alpha_mask_interface() {
+    Lambertian lamb(Color(0.5, 0.5, 0.5));
+    check(!lamb.is_alpha_masked(), "Lambertian default should not be alpha masked");
+    lamb.alpha_masked = true;
+    lamb.cutoff = 0.33;
+    check(lamb.is_alpha_masked() && near(lamb.alpha_cutoff(), 0.33),
+          "Lambertian alpha mask fields should expose via interface");
+
+    PBR pbr(std::make_shared<SolidColorTexture>(Color(0.5, 0.5, 0.5)), 0.5, 0.5);
+    check(!pbr.is_alpha_masked(), "PBR default should not be alpha masked");
+    pbr.alpha_masked = true;
+    pbr.cutoff = 0.5;
+    check(pbr.is_alpha_masked(), "PBR alpha mask should expose via interface");
+
+    Dielectric d(1.5);
+    d.double_sided = true;
+    check(d.is_double_sided(), "Dielectric double-sided should expose via interface");
+}
+
+void test_transformed_texture_applies_uv_scale_offset() {
+    auto solid = std::make_shared<SolidColorTexture>(Color(0.4, 0.6, 0.8));
+    TransformedTexture tex(solid, Vec2(2.0, 1.0), Vec2(0.5, 0.0));
+    Color c = tex.value(0.25, 0.5, Point3(0, 0, 0));
+    // u' = 0.25 * 2 + 0.5 = 1.0; v' = 0.5 * 1 + 0 = 0.5; solid ignores UV so color unchanged
+    check(near_vec(c, Color(0.4, 0.6, 0.8)), "TransformedTexture should pass through to wrapped texture");
+}
+
 void test_random_seed_repeats_sequence() {
     set_random_seed(1234);
     double a = random_double();
@@ -712,6 +773,10 @@ int main() {
     test_loaded_glb_pbr_emissive_texture_preserves_surface_shading();
     test_loaded_glb_volume_attenuation_reaches_dielectric();
     test_glb_transparency_texture_and_volume_thickness_parse();
+    test_glb_texture_transform_parses_scale_and_offset();
+    test_dielectric_partial_transmission_factor_stores();
+    test_material_alpha_mask_interface();
+    test_transformed_texture_applies_uv_scale_offset();
     test_json_dielectric_accepts_volume_attenuation();
     test_random_seed_repeats_sequence();
     test_random_double_stays_in_unit_interval();

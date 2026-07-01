@@ -1,0 +1,45 @@
+{
+    "image": {
+        "width": 128,
+        "height": 128,
+        "samples": 8,
+        "max_depth": 16,
+        "output": "/tmp/golden_bunny_test.png",
+        "tone_map": "aces",
+        "exposure": 1.0,
+        "seed": 45678
+    },
+    "camera": {
+        "lookfrom": [0, 0, 10],
+        "lookat": [0, 0, 0],
+        "vup": [0, 1, 0],
+        "vfov": 40,
+        "aperture": 0.0,
+        "focus_dist": 10.0
+    },
+    "lighting": {
+        "ambient": [0.06, 0.06, 0.06]
+    },
+    "lights": [
+        {
+            "type": "directional",
+            "direction": [-0.4, -1.0, -0.3],
+            "color": [1.0, 0.96, 0.9],
+            "intensity": 0.8
+        }
+    ],
+    "objects": [
+        {
+            "type": "mesh",
+            "file": "../../../models/obj/mark.obj",
+            "transform": {
+                "rotate": [0, 180, 0],
+                "scale": 0.2
+            },
+            "material": {
+                "type": "lambertian",
+                "albedo": [0.8, 0.6, 0.2]
+            }
+        }
+    ]
+}

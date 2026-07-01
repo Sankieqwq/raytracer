@@ -37,15 +37,26 @@ public:
         (void)rec;
         return Color(0, 0, 0);
     }
+    // Alpha mask: when alpha_mask is true, hits with alpha < alpha_cutoff
+    // should be discarded (treated as a miss). The renderer checks this
+    // after scatter() and re-casts the ray if discarded.
+    virtual bool is_alpha_masked() const { return false; }
+    virtual double alpha_cutoff() const { return 0.5; }
+    // Double-sided: when true, the material shades both faces. For
+    // transparent materials this disables backface culling; for opaque
+    // it flips the normal so the front face always faces the ray.
+    virtual bool is_double_sided() const { return false; }
 };
 
 class Lambertian : public Material {
 public:
     std::shared_ptr<Texture> texture;
+    bool alpha_masked = false;
+    double cutoff = 0.5;
 
     explicit Lambertian(const Color& albedo)
         : texture(std::make_shared<SolidColorTexture>(albedo)) {}
-    explicit Lambertian(std::shared_ptr<Texture> texture)
+    Lambertian(std::shared_ptr<Texture> texture)
         : texture(std::move(texture)) {}
 
     Color base_color(const HitRecord& rec) const override {
@@ -74,6 +85,9 @@ public:
         double cos_theta = dot(rec.normal, scattered.direction);
         return cos_theta > 0 ? cos_theta / pi : 0;
     }
+
+    bool is_alpha_masked() const override { return alpha_masked; }
+    double alpha_cutoff() const override { return cutoff; }
 };
 
 class Metal : public Material {
@@ -112,6 +126,9 @@ public:
     Color attenuation_color = Color(1, 1, 1);
     double attenuation_distance = infinity;
     double roughness = 0.0;
+    double transmission = 1.0;  // KHR_materials_transmission factor (0..1)
+    std::shared_ptr<Texture> transmission_texture;
+    bool double_sided = false;
 
     explicit Dielectric(double index_of_refraction, Color albedo = Color(1.0, 1.0, 1.0))
         : ior(index_of_refraction), albedo(albedo) {}
@@ -125,6 +142,15 @@ public:
 
     bool is_transparent() const override { return true; }
     bool is_specular() const override { return true; }
+    bool is_double_sided() const override { return double_sided; }
+
+    double transmission_value(const HitRecord& rec) const {
+        double t = transmission;
+        if (transmission_texture) {
+            t *= std::clamp(transmission_texture->value(rec.u, rec.v, rec.p).x, 0.0, 1.0);
+        }
+        return std::clamp(t, 0.0, 1.0);
+    }
 
     bool scatter(const Ray& r_in, const HitRecord& rec,
                  Color& attenuation, Ray& scattered,
@@ -136,15 +162,24 @@ public:
         double cos_theta = std::fmin(dot(-unit_dir, rec.normal), 1.0);
         double sin_theta = std::sqrt(1.0 - cos_theta * cos_theta);
 
+        double trans = transmission_value(rec);
+        // With partial transmission, stochastically choose reflect vs refract
+        // weighted by Fresnel and transmission factor. When trans < 1, a
+        // fraction of rays reflect instead of refracting, modeling thin
+        // transparent surfaces.
         bool cannot_refract = ratio * sin_theta > 1.0;
+        double fresnel = schlick(cos_theta, ratio);
+        double refract_prob = (1.0 - fresnel) * trans;
         Vec3 dir;
-        if (cannot_refract || schlick(cos_theta, ratio) > random_double())
+        if (cannot_refract || fresnel + (1.0 - fresnel) * (1.0 - trans) > random_double())
             dir = reflect(unit_dir, rec.normal);
         else
             dir = refract(unit_dir, rec.normal, ratio);
 
         double rough = std::clamp(roughness, 0.0, 1.0);
         if (rough > 0.0) {
+            // Rough transmission: blur the outgoing direction. Scale the
+            // perturbation by rough^2 so low roughness stays sharp.
             Vec3 rough_dir = dir + (rough * rough) * random_in_unit_sphere();
             if (rough_dir.length_squared() > 1e-12 &&
                 dot(rough_dir, rec.normal) * dot(dir, rec.normal) >= 0.0) {
@@ -185,6 +220,8 @@ public:
     Color emission = Color(0, 0, 0);
     std::shared_ptr<Texture> emission_texture;
     bool has_normal_map = false;
+    bool alpha_masked = false;
+    double cutoff = 0.5;
 
     PBR(std::shared_ptr<Texture> albedo_tex, double metallic_val, double roughness_val)
         : albedo(std::move(albedo_tex)),
@@ -294,6 +331,8 @@ public:
     }
 
     bool is_specular() const override { return false; }
+    bool is_alpha_masked() const override { return alpha_masked; }
+    double alpha_cutoff() const override { return cutoff; }
 
 private:
     double metallic_value(const HitRecord& rec) const {

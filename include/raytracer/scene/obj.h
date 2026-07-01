@@ -34,6 +34,12 @@ struct LoadedTextureData {
     std::vector<unsigned char> encoded;
 };
 
+struct TextureTransform {
+    Vec2 scale = Vec2(1.0, 1.0);
+    Vec2 offset = Vec2(0.0, 0.0);
+    bool active = false;
+};
+
 struct LoadedMaterialData {
     std::string name;
     bool use_pbr = false;
@@ -60,6 +66,13 @@ struct LoadedMaterialData {
     double thickness_factor = 0.0;  // KHR_materials_volume
     int thickness_texture = -1;
     double ior = 1.5;               // KHR_materials_ior (glTF default)
+    // KHR_texture_transform per texture reference
+    TextureTransform base_color_transform;
+    TextureTransform metallic_roughness_transform;
+    TextureTransform normal_transform;
+    TextureTransform emissive_transform;
+    TextureTransform transmission_transform;
+    TextureTransform thickness_transform;
 };
 
 struct ObjMeshData {

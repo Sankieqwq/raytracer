@@ -1,0 +1,50 @@
+{
+    "image": {
+        "width": 128,
+        "height": 72,
+        "samples": 8,
+        "max_depth": 16,
+        "output": "/tmp/golden_khronos_transmission_roughness_test.png",
+        "tone_map": "aces",
+        "exposure": 1.0,
+        "seed": 90123,
+        "firefly_clamp": 8.0
+    },
+    "camera": {
+        "auto": true,
+        "vfov": 35
+    },
+    "lighting": {
+        "ambient": [0.035, 0.035, 0.04]
+    },
+    "lights": [
+        {
+            "type": "directional",
+            "direction": [-0.5, -1.2, -0.8],
+            "color": [1.0, 0.96, 0.9],
+            "intensity": 0.8
+        },
+        {
+            "type": "point",
+            "position": [2.5, 3.5, 4.0],
+            "color": [0.8, 0.9, 1.0],
+            "intensity": 5.0
+        }
+    ],
+    "ground": {
+        "enabled": true
+    },
+    "objects": [
+        {
+            "type": "mesh",
+            "file": "../../../models/khronos/TransmissionRoughnessTest.glb",
+            "auto_fit": true,
+            "fit_size": 3.0,
+            "override_material": false,
+            "material": {
+                "type": "lambertian",
+                "albedo": [0.7, 0.7, 0.7]
+            }
+        }
+    ]
+}

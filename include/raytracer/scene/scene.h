@@ -353,17 +353,27 @@ inline Material* ensure_material(const JsonValue& obj,
     return parse_material(fallback, scene, base_dir);
 }
 
+inline std::shared_ptr<Texture> apply_texture_transform(std::shared_ptr<Texture> texture,
+                                                       const TextureTransform& transform) {
+    if (!transform.active) return texture;
+    return std::make_shared<TransformedTexture>(std::move(texture), transform.scale, transform.offset);
+}
+
 inline std::shared_ptr<Texture> make_loaded_texture_by_index(const ObjMeshData& mesh,
-                                                             int texture_index) {
+                                                             int texture_index,
+                                                             const TextureTransform& transform = {}) {
     if (texture_index >= 0 &&
         static_cast<size_t>(texture_index) < mesh.textures.size()) {
         const LoadedTextureData& texture = mesh.textures[texture_index];
+        std::shared_ptr<Texture> tex;
         if (!texture.encoded.empty()) {
-            return std::make_shared<ImageTexture>(texture.encoded, texture.mime_type);
+            tex = std::make_shared<ImageTexture>(texture.encoded, texture.mime_type);
+        } else if (!texture.path.empty()) {
+            tex = std::make_shared<ImageTexture>(texture.path);
+        } else {
+            tex = make_solid_texture(Color(1, 1, 1));
         }
-        if (!texture.path.empty()) {
-            return std::make_shared<ImageTexture>(texture.path);
-        }
+        return apply_texture_transform(tex, transform);
     }
     return make_solid_texture(Color(1, 1, 1));
 }
@@ -372,7 +382,7 @@ inline std::shared_ptr<Texture> make_loaded_texture(const ObjMeshData& mesh,
                                                     const LoadedMaterialData& data) {
     if (data.base_color_texture >= 0) {
         return std::make_shared<TintedTexture>(
-            make_loaded_texture_by_index(mesh, data.base_color_texture), data.albedo);
+            make_loaded_texture_by_index(mesh, data.base_color_texture, data.base_color_transform), data.albedo);
     }
     return make_solid_texture(data.albedo);
 }
@@ -380,11 +390,12 @@ inline std::shared_ptr<Texture> make_loaded_texture(const ObjMeshData& mesh,
 inline std::shared_ptr<Texture> make_loaded_scalar_texture(const ObjMeshData& mesh,
                                                            int texture_index,
                                                            int channel,
-                                                           double fallback) {
+                                                           double fallback,
+                                                           const TextureTransform& transform = {}) {
     if (texture_index >= 0 &&
         static_cast<size_t>(texture_index) < mesh.textures.size()) {
         return std::make_shared<TextureChannel>(
-            make_loaded_texture_by_index(mesh, texture_index), channel);
+            make_loaded_texture_by_index(mesh, texture_index, transform), channel);
     }
     return make_solid_texture(Color(fallback, 0, 0));
 }
@@ -399,31 +410,51 @@ inline Material* add_loaded_material(const ObjMeshData& mesh,
         dielectric->attenuation_color = data.attenuation_color;
         dielectric->attenuation_distance = data.attenuation_distance;
         dielectric->roughness = std::clamp(data.roughness, 0.0, 1.0);
+        dielectric->transmission = std::clamp(data.transmission > 0.0 ? data.transmission : 1.0, 0.0, 1.0);
+        dielectric->double_sided = data.double_sided;
+        if (data.transmission_texture >= 0) {
+            dielectric->transmission_texture = make_loaded_scalar_texture(mesh, data.transmission_texture, 0, dielectric->transmission, data.transmission_transform);
+        }
         if (std::isfinite(dielectric->attenuation_distance) && data.thickness_factor > 1e-6) {
             dielectric->attenuation_distance /= data.thickness_factor;
+        }
+        if (data.thickness_texture >= 0) {
+            auto thickness_tex = make_loaded_scalar_texture(mesh, data.thickness_texture, 0, data.thickness_factor, data.thickness_transform);
+            (void)thickness_tex;  // stored on dielectric if per-pixel thickness supported later
         }
         mat = std::move(dielectric);
     } else if (data.use_pbr) {
         auto pbr = std::make_unique<PBR>(make_loaded_texture(mesh, data), data.metallic, data.roughness);
         if (data.metallic_roughness_texture >= 0) {
-            pbr->roughness = make_loaded_scalar_texture(mesh, data.metallic_roughness_texture, 1, data.roughness);
-            pbr->metallic = make_loaded_scalar_texture(mesh, data.metallic_roughness_texture, 2, data.metallic);
+            pbr->roughness = make_loaded_scalar_texture(mesh, data.metallic_roughness_texture, 1, data.roughness, data.metallic_roughness_transform);
+            pbr->metallic = make_loaded_scalar_texture(mesh, data.metallic_roughness_texture, 2, data.metallic, data.metallic_roughness_transform);
+        }
+        // MTL map_Ks drives metallic, map_Ns drives roughness (inverted).
+        if (data.specular_texture >= 0) {
+            pbr->metallic = make_loaded_scalar_texture(mesh, data.specular_texture, 0, data.metallic);
+        }
+        if (data.shininess_texture >= 0) {
+            pbr->roughness = make_loaded_scalar_texture(mesh, data.shininess_texture, 0, data.roughness);
         }
         if (data.normal_texture >= 0) {
-            pbr->normal = make_loaded_texture_by_index(mesh, data.normal_texture);
+            pbr->normal = make_loaded_texture_by_index(mesh, data.normal_texture, data.normal_transform);
             pbr->has_normal_map = true;
         }
         if (has_emission) {
             pbr->emission = data.emissive;
             if (data.emissive_texture >= 0) {
-                pbr->emission_texture = make_loaded_texture_by_index(mesh, data.emissive_texture);
+                pbr->emission_texture = make_loaded_texture_by_index(mesh, data.emissive_texture, data.emissive_transform);
             }
+        }
+        if (data.alpha_mask) {
+            pbr->alpha_masked = true;
+            pbr->cutoff = data.alpha_cutoff;
         }
         mat = std::move(pbr);
     } else if (has_emission) {
         if (data.emissive_texture >= 0) {
             mat = std::make_unique<Emissive>(
-                data.emissive, make_loaded_texture_by_index(mesh, data.emissive_texture));
+                data.emissive, make_loaded_texture_by_index(mesh, data.emissive_texture, data.emissive_transform));
         } else {
             mat = std::make_unique<Emissive>(data.emissive);
         }
@@ -431,7 +462,12 @@ inline Material* add_loaded_material(const ObjMeshData& mesh,
         double fuzz = std::clamp(data.roughness, 0.0, 1.0);
         mat = std::make_unique<Metal>(make_loaded_texture(mesh, data), fuzz);
     } else {
-        mat = std::make_unique<Lambertian>(make_loaded_texture(mesh, data));
+        auto lambert = std::make_unique<Lambertian>(make_loaded_texture(mesh, data));
+        if (data.alpha_mask) {
+            lambert->alpha_masked = true;
+            lambert->cutoff = data.alpha_cutoff;
+        }
+        mat = std::move(lambert);
     }
 
     Material* ptr = mat.get();

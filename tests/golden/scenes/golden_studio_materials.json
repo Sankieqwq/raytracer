@@ -1,0 +1,77 @@
+{
+    "render": {
+        "width": 128,
+        "height": 96,
+        "samples": 8,
+        "max_depth": 16,
+        "output": "/tmp/golden_studio_materials.png",
+        "tone_map": "aces",
+        "exposure": 1.0,
+        "seed": 78901,
+        "firefly_clamp": 8.0
+    },
+    "scene": {
+        "preset": "studio_softbox"
+    },
+    "environment": {
+        "type": "gradient",
+        "top": [0.42, 0.50, 0.68],
+        "bottom": [0.92, 0.90, 0.84],
+        "intensity": 0.35
+    },
+    "camera": {
+        "auto": true,
+        "view": "three_quarter",
+        "vfov": 34,
+        "margin": 1.55,
+        "target_offset": [0.0, 0.25, -0.15],
+        "aperture": 0.0
+    },
+    "lighting": {
+        "ambient": [0.018, 0.018, 0.020]
+    },
+    "ground": {
+        "enabled": true,
+        "size": 7.5,
+        "material": {
+            "type": "lambertian",
+            "albedo": [0.55, 0.56, 0.54]
+        }
+    },
+    "objects": [
+        {
+            "type": "sphere",
+            "center": [-1.45, 0.62, -0.55],
+            "radius": 0.62,
+            "material": {
+                "type": "metal",
+                "albedo": [0.94, 0.95, 0.97],
+                "fuzz": 0.0
+            }
+        },
+        {
+            "type": "sphere",
+            "center": [0.0, 0.64, -0.72],
+            "radius": 0.64,
+            "material": {
+                "type": "dielectric",
+                "ior": 1.52,
+                "roughness": 0.08,
+                "albedo": [0.98, 0.99, 1.0],
+                "attenuation_color": [0.76, 0.90, 1.0],
+                "attenuation_distance": 1.25
+            }
+        },
+        {
+            "type": "sphere",
+            "center": [1.35, 0.55, -0.35],
+            "radius": 0.55,
+            "material": {
+                "type": "pbr",
+                "albedo": [0.78, 0.36, 0.18],
+                "metallic": 0.65,
+                "roughness": 0.32
+            }
+        }
+    ]
+}

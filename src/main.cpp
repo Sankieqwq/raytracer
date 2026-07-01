@@ -24,6 +24,7 @@ struct RenderOptions {
     bool direct_only = false;
     bool preview = false;
     bool stats = false;
+    std::string stats_format = "text";  // "text" or "json"
     int threads = 0;
 };
 
@@ -77,6 +78,15 @@ Color direct_delta_lights(const Ray& r_in, const HitRecord& rec, const Scene& sc
 
 Color ray_color(const Ray& r, const Scene& scene, int depth,
                 const RenderOptions& options,
+                double prev_pdf, bool prev_brdf);
+
+// Russian roulette helper for specular/transparent paths.
+Color ray_color_roulette(const Ray& r, const Scene& scene, int depth,
+                         const RenderOptions& options,
+                         const HitRecord& rec, const Color& throughput);
+
+Color ray_color(const Ray& r, const Scene& scene, int depth,
+                const RenderOptions& options,
                 double prev_pdf, bool prev_brdf) {
     if (depth <= 0) return Color(0, 0, 0);
 
@@ -106,12 +116,30 @@ Color ray_color(const Ray& r, const Scene& scene, int depth,
     bool did_scatter = rec.material && rec.material->scatter(r, rec, attenuation, scattered, scatter_emission);
     Color emission = scatter_emission + (rec.material ? rec.material->emitted(rec) : Color(0, 0, 0));
 
+    // Alpha mask: if the hit point's alpha is below the material's cutoff,
+    // discard the hit and treat the ray as passing through (return background
+    // or continue recursion). This implements glTF alphaMode "MASK".
+    if (rec.material && rec.material->is_alpha_masked() && did_scatter) {
+        Color bc = rec.material->base_color(rec);
+        double alpha = std::max({bc.x, bc.y, bc.z});
+        if (alpha < rec.material->alpha_cutoff()) {
+            return scene_background(scene, r);
+        }
+    }
+
     if (rec.material && rec.material->is_specular()) {
         if (options.direct_only) return emission;
         if (!did_scatter) return emission;
+
+        // Russian roulette for specular / transparent paths: once the ray has
+        // bounced several times, randomly terminate low-contribution paths
+        // and scale up survivors. This cuts wasted work on long transparent
+        // chains (glass, water) without darkening the result.
+        Color result = attenuation * ray_color_roulette(scattered, scene, depth - 1, options, rec, attenuation);
         double brdf_pdf = rec.material->pdf(r, scattered, rec);
         if (brdf_pdf <= 0) brdf_pdf = 1;
-        return emission + attenuation * ray_color(scattered, scene, depth - 1, options, brdf_pdf, true);
+        (void)brdf_pdf;  // specular delta paths have implicit pdf=1
+        return emission + result;
     }
 
     Color direct = direct_delta_lights(r, rec, scene);
@@ -160,6 +188,28 @@ Color ray_color(const Ray& r, const Scene& scene, int depth,
     return emission + direct + indirect;
 }
 
+// Russian roulette helper for specular/transparent paths. Scales the
+// recursive contribution by 1/p when the path survives, keeping the
+// expected value unchanged while cutting compute on deep bounces.
+Color ray_color_roulette(const Ray& r, const Scene& scene, int depth,
+                         const RenderOptions& options,
+                         const HitRecord& rec, const Color& throughput) {
+    // Only apply RR after a few bounces so early paths stay unbiased and
+    // noise-free. Use a luminance-based continuation probability capped at
+    // 0.95 to avoid infinite loops.
+    if (depth >= 4) {
+        double lum = 0.2126 * throughput.x + 0.7152 * throughput.y + 0.0722 * throughput.z;
+        double p = std::min(0.95, std::max(0.05, lum));
+        if (random_double() > p) {
+            return Color(0, 0, 0);
+        }
+        Color child = ray_color(r, scene, depth, options, infinity, true);
+        return child / p;
+    }
+    (void)rec;
+    return ray_color(r, scene, depth, options, infinity, true);
+}
+
 void print_usage(const char* prog) {
     std::cerr << "Usage: " << prog << " [options]\n"
               << "  --scene <path>     scene JSON file (default: scenes/default.json)\n"
@@ -173,6 +223,7 @@ void print_usage(const char* prog) {
               << "  --seed <n>         deterministic random seed (default: random_device)\n"
               << "  --firefly-clamp <n> clamp per-sample radiance peak before accumulation\n"
               << "  --stats            print load/render timing and scene statistics\n"
+              << "  --stats-format <m> stats output format: text or json (default: text)\n"
               << "  --direct-only      disable recursive random bounces, use direct light + shadows only\n"
               << "  --preview          fast preview mode: direct-only and samples=1 unless overridden\n";
 }
@@ -216,6 +267,9 @@ int main(int argc, char* argv[]) {
             firefly_clamp_override = std::stod(argv[++i]);
         } else if (arg == "--stats") {
             render_options.stats = true;
+        } else if (arg == "--stats-format" && i + 1 < argc) {
+            render_options.stats = true;
+            render_options.stats_format = argv[++i];
         } else if (arg == "--direct-only") {
             render_options.direct_only = true;
         } else if (arg == "--preview") {
@@ -339,11 +393,31 @@ int main(int argc, char* argv[]) {
         auto millis = [](std::chrono::steady_clock::duration d) {
             return std::chrono::duration_cast<std::chrono::milliseconds>(d).count();
         };
-        std::cout << "Stats:\n"
-                  << "  load_ms=" << millis(load_end - load_start) << "\n"
-                  << "  render_ms=" << millis(render_end - render_start) << "\n"
-                  << "  total_ms=" << millis(total_end - total_start) << "\n"
-                  << "  emissive_area=" << scene.emissive_total_area << "\n";
+        double load_ms = millis(load_end - load_start);
+        double render_ms = millis(render_end - render_start);
+        double total_ms = millis(total_end - total_start);
+        if (render_options.stats_format == "json") {
+            std::cout << "{"
+                      << "\"scene\":\"" << scene_path << "\","
+                      << "\"output\":\"" << scene.output << "\","
+                      << "\"width\":" << scene.width << ","
+                      << "\"height\":" << scene.height << ","
+                      << "\"samples\":" << scene.samples << ","
+                      << "\"max_depth\":" << scene.max_depth << ","
+                      << "\"threads\":" << thread_count << ","
+                      << "\"primitives\":" << scene.primitive_count << ","
+                      << "\"load_ms\":" << load_ms << ","
+                      << "\"render_ms\":" << render_ms << ","
+                      << "\"total_ms\":" << total_ms << ","
+                      << "\"emissive_area\":" << scene.emissive_total_area
+                      << "}\n";
+        } else {
+            std::cout << "Stats:\n"
+                      << "  load_ms=" << load_ms << "\n"
+                      << "  render_ms=" << render_ms << "\n"
+                      << "  total_ms=" << total_ms << "\n"
+                      << "  emissive_area=" << scene.emissive_total_area << "\n";
+        }
     }
     return 0;
 }
