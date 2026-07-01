@@ -40,13 +40,19 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-CMake 测试包含 C++ 回归测试和 deterministic golden image 回归。更新 golden 图片时先确认渲染变化符合预期，再运行：
+CMake 测试包含 C++ 回归测试和 deterministic golden image 回归；golden 覆盖基础球、镜面/玻璃/水、Khronos GLB PBR/透明材质以及 OBJ MTL 导入。更新 golden 图片时先确认渲染变化符合预期，再运行：
 
 ```bash
-./build/raytracer --scene tests/golden/scenes/golden_default.json --threads 1 --out /tmp/golden_default.png
-python3 tests/golden/compare_images.py --actual /tmp/golden_default.png --expected tests/golden/images/golden_default.png --update
-./build/raytracer --scene tests/golden/scenes/golden_mirror_glass_water.json --threads 1 --out /tmp/golden_mirror_glass_water.png
-python3 tests/golden/compare_images.py --actual /tmp/golden_mirror_glass_water.png --expected tests/golden/images/golden_mirror_glass_water.png --update
+for name in \
+    golden_default \
+    golden_mirror_glass_water \
+    golden_khronos_compare_metallic \
+    golden_khronos_attenuation_test \
+    golden_obj_mtl_test
+do
+    ./build/raytracer --scene "tests/golden/scenes/${name}.json" --threads 1 --out "/tmp/${name}.png"
+    python3 tests/golden/compare_images.py --actual "/tmp/${name}.png" --expected "tests/golden/images/${name}.png" --update
+done
 ```
 
 ### 性能基准

@@ -38,4 +38,19 @@ if(Python3_Interpreter_FOUND)
         COMMAND sh -c "$<TARGET_FILE:raytracer> --scene tests/golden/scenes/golden_mirror_glass_water.json --threads 1 --out /tmp/golden_mirror_glass_water.png && ${Python3_EXECUTABLE} tests/golden/compare_images.py --actual /tmp/golden_mirror_glass_water.png --expected tests/golden/images/golden_mirror_glass_water.png")
     set_tests_properties(golden_mirror_glass_water PROPERTIES
         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
+    add_test(NAME golden_khronos_compare_metallic
+        COMMAND sh -c "$<TARGET_FILE:raytracer> --scene tests/golden/scenes/golden_khronos_compare_metallic.json --threads 1 --out /tmp/golden_khronos_compare_metallic.png && ${Python3_EXECUTABLE} tests/golden/compare_images.py --actual /tmp/golden_khronos_compare_metallic.png --expected tests/golden/images/golden_khronos_compare_metallic.png")
+    set_tests_properties(golden_khronos_compare_metallic PROPERTIES
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
+    add_test(NAME golden_khronos_attenuation_test
+        COMMAND sh -c "$<TARGET_FILE:raytracer> --scene tests/golden/scenes/golden_khronos_attenuation_test.json --threads 1 --out /tmp/golden_khronos_attenuation_test.png && ${Python3_EXECUTABLE} tests/golden/compare_images.py --actual /tmp/golden_khronos_attenuation_test.png --expected tests/golden/images/golden_khronos_attenuation_test.png")
+    set_tests_properties(golden_khronos_attenuation_test PROPERTIES
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
+    add_test(NAME golden_obj_mtl_test
+        COMMAND sh -c "$<TARGET_FILE:raytracer> --scene tests/golden/scenes/golden_obj_mtl_test.json --threads 1 --out /tmp/golden_obj_mtl_test.png && ${Python3_EXECUTABLE} tests/golden/compare_images.py --actual /tmp/golden_obj_mtl_test.png --expected tests/golden/images/golden_obj_mtl_test.png")
+    set_tests_properties(golden_obj_mtl_test PROPERTIES
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 endif()
