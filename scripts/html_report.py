@@ -6,17 +6,25 @@ benchmark_report.py, embeds the rendered PNGs as base64 data URIs, and
 emits a single portable .html file with a responsive card layout,
 acceptance badges, per-scene metrics, and performance comparison.
 
+By default, if the render-dir has no metrics.json or --hq-samples is
+requested and the <scene>_hq.png images are missing, this script will
+automatically invoke render_report.py to produce the renders first so
+the HTML is always backed by fresh high-quality images.
+
 Usage:
     python3 scripts/html_report.py \
         --render-dir reports/render_20260701 \
         --benchmark reports/benchmark_20260701.json \
-        --out reports/render_20260701/report.html
+        --out reports/render_20260701/report.html \
+        --hq-samples 512 --samples 64
 """
 
 import argparse
 import base64
 import json
 import os
+import subprocess
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -70,6 +78,42 @@ def b64_image(path: Path) -> str:
     return "data:image/png;base64," + base64.b64encode(data).decode("ascii")
 
 
+def ensure_renders(render_dir: Path, samples: int, hq_samples: int,
+                    threads: int, scenes: list, force: bool) -> None:
+    """Invoke render_report.py if render-dir is missing renders or HQ images.
+
+    Triggers a re-render when:
+      - metrics.json is missing, or
+      - any <scene>_<samples>s.png thumbnail is missing, or
+      - hq_samples > 0 and any <scene>_hq.png is missing, or
+      - --force-rerender was passed.
+    """
+    metrics_path = render_dir / "metrics.json"
+    needs_render = force or not metrics_path.exists()
+    if scenes:
+        for s in scenes:
+            name = Path(s).stem
+            thumb = render_dir / f"{name}_{samples}s.png"
+            if not thumb.exists():
+                needs_render = True
+            if hq_samples > 0 and not (render_dir / f"{name}_hq.png").exists():
+                needs_render = True
+    if not needs_render:
+        return
+    script = Path(__file__).resolve().parent / "render_report.py"
+    cmd = [sys.executable, str(script),
+           "--samples", str(samples),
+           "--hq-samples", str(hq_samples),
+           "--threads", str(threads),
+           "--out", str(render_dir)]
+    if scenes:
+        cmd += ["--scenes"] + scenes
+    print(f"Auto-rendering via: {' '.join(cmd)}", file=sys.stderr)
+    proc = subprocess.run(cmd)
+    if proc.returncode != 0:
+        sys.exit("render_report.py failed; cannot build HTML without renders")
+
+
 def acceptance_badge(result: dict) -> str:
     if not result.get("rendered"):
         return '<span class="badge badge-fail">Fail</span>'
@@ -90,6 +134,9 @@ def acceptance_badge(result: dict) -> str:
 def scene_card(scene_name: str, result: dict, render_dir: Path, samples: int) -> str:
     img_path = render_dir / f"{scene_name}_{samples}s.png"
     img_uri = b64_image(img_path) if img_path.exists() else ""
+    hq_path = render_dir / f"{scene_name}_hq.png"
+    hq_uri = b64_image(hq_path) if hq_path.exists() else ""
+    has_hq = bool(hq_uri) and result.get("has_hq")
     title = SCENE_TITLES.get(scene_name, scene_name)
     cat = SCENE_CATEGORIES.get(scene_name, "standard")
     cat_color = CATEGORY_COLORS.get(cat, "#6b7280")
@@ -100,6 +147,21 @@ def scene_card(scene_name: str, result: dict, render_dir: Path, samples: int) ->
     render_ms = result.get("render_ms", "-")
     size_kb = result.get("size_kb", "-")
     badge = acceptance_badge(result)
+    hq_w = result.get("hq_width", "?")
+    hq_h = result.get("hq_height", "?")
+    hq_samples = result.get("hq_samples", 0)
+    hq_size_kb = result.get("hq_size_kb", 0)
+    if has_hq:
+        hq_link = (f'<a class="hq-link" data-scene="{scene_name}" '
+                   f'data-hq-samples="{hq_samples}" '
+                   f'data-hq-size="{hq_w}x{hq_h} ({hq_size_kb} KB)" '
+                   f'href="{hq_uri}" target="_blank" rel="noopener">'
+                   f'View high-res ({hq_samples} spp, {hq_w}&times;{hq_h})</a>')
+        # Hidden img tag pre-loads HQ for the modal
+        hq_preload = f'<img class="hq-hidden" id="hq-{scene_name}" src="{hq_uri}" alt="HQ {scene_name}" />'
+    else:
+        hq_link = '<span class="hq-link muted">No high-res</span>'
+        hq_preload = ""
     return f"""
     <article class="card" data-category="{cat}">
       <div class="card-img-wrap">
@@ -109,7 +171,7 @@ def scene_card(scene_name: str, result: dict, render_dir: Path, samples: int) ->
       <div class="card-body">
         <h3>{title}</h3>
         <div class="card-meta">
-          <span><strong>{w}&times;{h}</strong></span>
+          <span><strong>{w}&times;{h}</strong> @ {samples} spp</span>
           <span>render: <strong>{render_ms} ms</strong></span>
         </div>
         <div class="metrics-row">
@@ -118,7 +180,9 @@ def scene_card(scene_name: str, result: dict, render_dir: Path, samples: int) ->
           <div class="metric"><label>size</label><span>{size_kb} KB</span></div>
         </div>
         <div class="accept-row">{badge}</div>
+        <div class="hq-row">{hq_link}</div>
       </div>
+      {hq_preload}
     </article>"""
 
 
@@ -176,13 +240,40 @@ def category_summary(bench_json: dict) -> str:
     return "".join(cards)
 
 
-def build_html(render_dir: Path, bench_path: Path, out_path: Path) -> None:
+def build_html(render_dir: Path, bench_path: Path, out_path: Path,
+               samples_override: int = 0, hq_samples_override: int = 0,
+               threads_override: int = 0, force_rerender: bool = False,
+               scenes_override: list = None) -> None:
+    # Auto-render if needed (missing metrics, thumbnails, or HQ images)
+    # Determine samples to expect from metrics.json if it exists, else from override
+    expected_samples = samples_override
+    expected_hq = hq_samples_override
+    metrics_path = render_dir / "metrics.json"
+    if metrics_path.exists() and not force_rerender:
+        try:
+            existing = json.loads(metrics_path.read_text())
+            if not expected_samples:
+                expected_samples = existing.get("samples", 0)
+            if not expected_hq:
+                expected_hq = existing.get("hq_samples", 0)
+        except json.JSONDecodeError:
+            pass
+    if expected_samples or expected_hq or force_rerender or not metrics_path.exists():
+        ensure_renders(render_dir,
+                        samples=expected_samples or 64,
+                        hq_samples=expected_hq if expected_hq else 512,
+                        threads=threads_override or (os.cpu_count() or 4),
+                        scenes=scenes_override or [],
+                        force=force_rerender)
+
     metrics = json.loads((render_dir / "metrics.json").read_text())
     bench = json.loads(bench_path.read_text()) if bench_path and bench_path.exists() else {}
     samples = metrics.get("samples", 0)
+    hq_samples = metrics.get("hq_samples", 0)
     threads = metrics.get("threads", 0)
     results = metrics.get("results", [])
     rendered = sum(1 for r in results if r.get("rendered"))
+    hq_count = sum(1 for r in results if r.get("has_hq"))
     pass_count = 0
     needs_count = 0
     fail_count = 0
@@ -198,6 +289,9 @@ def build_html(render_dir: Path, bench_path: Path, out_path: Path) -> None:
     cards = "\n".join(scene_card(r["scene"], r, render_dir, samples) for r in results)
     perf = perf_table(bench) if bench else "<p class='muted'>No benchmark data provided.</p>"
     cats = category_summary(bench) if bench else ""
+    hq_summary_val = f"{hq_count}/{len(results)}" if hq_samples else "disabled"
+    hq_meta = (f'<span>HQ: <strong>{hq_samples} spp</strong> &middot; {hq_count}/{len(results)} rendered</span>'
+               if hq_samples else '<span>HQ: <strong>disabled</strong></span>')
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -376,6 +470,74 @@ def build_html(render_dir: Path, bench_path: Path, out_path: Path) -> None:
   footer a {{ color: var(--accent); text-decoration: none; }}
   .muted {{ color: var(--muted); }}
 
+  .hq-row {{ margin-top: auto; padding-top: 8px; border-top: 1px dashed var(--border); }}
+  .hq-link {{
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--accent);
+    text-decoration: none;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 6px 10px;
+    border-radius: 6px;
+    border: 1px solid rgba(96,165,250,0.3);
+    background: rgba(96,165,250,0.08);
+    cursor: pointer;
+    transition: all 0.15s;
+  }}
+  .hq-link:hover {{
+    background: rgba(96,165,250,0.2);
+    border-color: var(--accent);
+    transform: translateY(-1px);
+  }}
+  .hq-link::before {{ content: "\\\\1F4C4"; font-size: 14px; }}
+  .hq-hidden {{ display: none; }}
+
+  /* Modal lightbox for high-res image */
+  .modal-overlay {{
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.92);
+    z-index: 1000;
+    justify-content: center;
+    align-items: center;
+    padding: 24px;
+    flex-direction: column;
+  }}
+  .modal-overlay.open {{ display: flex; }}
+  .modal-close {{
+    position: absolute;
+    top: 16px;
+    right: 20px;
+    color: #fff;
+    font-size: 28px;
+    cursor: pointer;
+    background: rgba(40,44,52,0.8);
+    border: 1px solid var(--border);
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+  }}
+  .modal-close:hover {{ background: var(--accent); color: #0b1220; }}
+  .modal-title {{ color: #fff; font-size: 16px; margin: 0 0 12px; text-align: center; }}
+  .modal-meta {{ color: var(--muted); font-size: 13px; margin-bottom: 14px; text-align: center; }}
+  .modal-img-wrap {{
+    max-width: 95vw;
+    max-height: 80vh;
+    overflow: auto;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: #000;
+  }}
+  .modal-img-wrap img {{ display: block; max-width: 100%; max-height: 80vh; object-fit: contain; }}
+  .modal-hint {{ color: var(--muted); font-size: 12px; margin-top: 12px; text-align: center; }}
+
   @media (max-width: 640px) {{
     header h1 {{ font-size: 26px; }}
     .grid {{ grid-template-columns: 1fr; }}
@@ -387,7 +549,8 @@ def build_html(render_dir: Path, bench_path: Path, out_path: Path) -> None:
   <h1>Raytracer Render Quality Report</h1>
   <div class="sub">CPU path tracer &middot; PBR + glTF + OBJ &middot; generated {ts}</div>
   <div class="meta">
-    <span>samples: <strong>{samples}</strong></span>
+    <span>thumbnail: <strong>{samples} spp</strong></span>
+    <span>HQ: <strong>{hq_samples} spp</strong> &middot; {hq_count}/{len(results)} rendered</span>
     <span>threads: <strong>{threads}</strong></span>
     <span>scenes rendered: <strong>{rendered}/{len(results)}</strong></span>
   </div>
@@ -400,7 +563,7 @@ def build_html(render_dir: Path, bench_path: Path, out_path: Path) -> None:
     <div class="summary-card needs"><div class="label">Needs work</div><div class="value">{needs_count}</div></div>
     <div class="summary-card fail"><div class="label">Failed</div><div class="value">{fail_count}</div></div>
     <div class="summary-card"><div class="label">Scenes</div><div class="value">{len(results)}</div></div>
-    <div class="summary-card"><div class="label">Samples/px</div><div class="value">{samples}</div></div>
+    <div class="summary-card"><div class="label">High-res renders</div><div class="value">{hq_count}</div></div>
   </div>
 
   <section>
@@ -446,6 +609,15 @@ def build_html(render_dir: Path, bench_path: Path, out_path: Path) -> None:
   </footer>
 </div>
 
+<!-- Modal lightbox for high-resolution renders -->
+<div class="modal-overlay" id="hqModal">
+  <div class="modal-close" id="hqModalClose" title="Close (Esc)">&times;</div>
+  <div class="modal-title" id="hqModalTitle"></div>
+  <div class="modal-meta" id="hqModalMeta"></div>
+  <div class="modal-img-wrap"><img id="hqModalImg" src="" alt="high-resolution render" /></div>
+  <div class="modal-hint">Click image to open full-resolution in new tab &middot; press Esc to close</div>
+</div>
+
 <script>
   const buttons = document.querySelectorAll('.filter-bar button');
   const cards = document.querySelectorAll('.card');
@@ -458,6 +630,45 @@ def build_html(render_dir: Path, bench_path: Path, out_path: Path) -> None:
       c.style.display = show ? '' : 'none';
     }});
   }}));
+
+  // High-res lightbox: open the HQ image in a modal instead of navigating away.
+  const modal = document.getElementById('hqModal');
+  const modalImg = document.getElementById('hqModalImg');
+  const modalTitle = document.getElementById('hqModalTitle');
+  const modalMeta = document.getElementById('hqModalMeta');
+  const modalClose = document.getElementById('hqModalClose');
+
+  function openModal(scene, hqUri, hqSamples, hqSize) {{
+    modalImg.src = hqUri;
+    modalTitle.textContent = scene;
+    modalMeta.textContent = `High-quality render \u00B7 ${{hqSamples}} samples per pixel \u00B7 ${{hqSize}}`;
+    modal.classList.add('open');
+    document.body.style.overflow = 'hidden';
+  }}
+  function closeModal() {{
+    modal.classList.remove('open');
+    modalImg.src = '';
+    document.body.style.overflow = '';
+  }}
+  modalClose.addEventListener('click', closeModal);
+  modal.addEventListener('click', (e) => {{ if (e.target === modal) closeModal(); }});
+  document.addEventListener('keydown', (e) => {{ if (e.key === 'Escape') closeModal(); }});
+  // Click on modal image opens full-res in new tab
+  modalImg.addEventListener('click', () => {{
+    if (modalImg.src) window.open(modalImg.src, '_blank');
+  }});
+
+  // Wire up all HQ links: prevent default navigation, open modal instead.
+  document.querySelectorAll('a.hq-link').forEach(a => {{
+    a.addEventListener('click', (e) => {{
+      e.preventDefault();
+      const scene = a.dataset.scene;
+      const hqUri = a.getAttribute('href');
+      const hqSamples = a.dataset.hqSamples;
+      const hqSize = a.dataset.hqSize;
+      openModal(scene, hqUri, hqSamples, hqSize);
+    }});
+  }});
 </script>
 </body>
 </html>
@@ -468,17 +679,34 @@ def build_html(render_dir: Path, bench_path: Path, out_path: Path) -> None:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--render-dir", required=True,
-                    help="directory with metrics.json + <scene>_<samples>s.png images")
+                    help="directory with metrics.json + <scene>_<samples>s.png images; "
+                         "will be auto-populated if missing")
     ap.add_argument("--benchmark", default=None,
                     help="benchmark_*.json from benchmark_report.py")
     ap.add_argument("--out", required=True, help="output .html path")
+    ap.add_argument("--samples", type=int, default=64,
+                    help="thumbnail samples per pixel for card images (default 64)")
+    ap.add_argument("--hq-samples", type=int, default=512,
+                    help="high-quality samples per pixel for the linked full-res "
+                         "images (default 512; set to 0 to disable HQ rendering)")
+    ap.add_argument("--threads", type=int, default=0,
+                    help="render threads; 0 = hardware concurrency")
+    ap.add_argument("--scenes", nargs="*", default=None,
+                    help="optional subset of scenes to render")
+    ap.add_argument("--force-rerender", action="store_true",
+                    help="re-render even if renders already exist")
     args = ap.parse_args()
 
     render_dir = Path(args.render_dir).resolve()
     bench_path = Path(args.benchmark).resolve() if args.benchmark else None
     out_path = Path(args.out).resolve()
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    build_html(render_dir, bench_path, out_path)
+    build_html(render_dir, bench_path, out_path,
+               samples_override=args.samples,
+               hq_samples_override=args.hq_samples,
+               threads_override=args.threads,
+               force_rerender=args.force_rerender,
+               scenes_override=args.scenes)
     size_kb = out_path.stat().st_size / 1024
     print(f"Wrote {out_path} ({size_kb:.1f} KB)")
 

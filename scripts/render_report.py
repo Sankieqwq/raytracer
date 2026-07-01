@@ -143,7 +143,10 @@ def build_contact_sheet(image_paths, out_path: Path, cols=4, thumb_w=240):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--samples", type=int, default=64)
+    ap.add_argument("--samples", type=int, default=64,
+                    help="thumbnail samples for the contact sheet / card images")
+    ap.add_argument("--hq-samples", type=int, default=512,
+                    help="high-quality samples for the linked full-resolution images (0 = skip HQ)")
     ap.add_argument("--threads", type=int, default=0)
     ap.add_argument("--out", default=None)
     ap.add_argument("--scenes", nargs="*", default=None)
@@ -166,6 +169,9 @@ def main():
             continue
         name = Path(scene).stem
         out_png = out_dir / f"{name}_{args.samples}s.png"
+        hq_png = out_dir / f"{name}_hq.png"
+        stats = {}
+        # Thumbnail render (lower samples, fast)
         cmd = [binary, "--scene", str(scene_path),
                "--samples", str(args.samples), "--threads", str(threads),
                "--out", str(out_png), "--stats-format", "json"]
@@ -174,14 +180,23 @@ def main():
             results.append({"scene": name, "rendered": False,
                             "error": proc.stderr.strip().splitlines()[-1:][:200]})
             continue
-        # Parse stats line
-        stats = {}
         for line in proc.stdout.splitlines():
             if line.startswith("{"):
                 try:
                     stats = json.loads(line)
                 except json.JSONDecodeError:
                     pass
+        # High-quality render (large samples, for the linked full-res image)
+        hq_ok = False
+        hq_info = {}
+        if args.hq_samples > 0:
+            hq_cmd = [binary, "--scene", str(scene_path),
+                      "--samples", str(args.hq_samples), "--threads", str(threads),
+                      "--out", str(hq_png), "--stats-format", "json"]
+            hq_proc = subprocess.run(hq_cmd, capture_output=True, text=True)
+            hq_ok = hq_proc.returncode == 0 and hq_png.exists()
+            if hq_ok:
+                hq_info = validate_png(hq_png)
         info = validate_png(out_png)
         metrics = image_metrics(out_png)
         results.append({
@@ -190,6 +205,11 @@ def main():
             "render_ms": stats.get("render_ms", 0),
             "load_ms": stats.get("load_ms", 0),
             "primitives": stats.get("primitives", 0),
+            "has_hq": hq_ok,
+            "hq_samples": args.hq_samples if hq_ok else 0,
+            "hq_width": hq_info.get("width", 0),
+            "hq_height": hq_info.get("height", 0),
+            "hq_size_kb": hq_info.get("size_kb", 0),
             **info,
             **metrics,
         })
@@ -202,7 +222,8 @@ def main():
 
     # Metrics JSON
     (out_dir / "metrics.json").write_text(
-        json.dumps({"timestamp": ts, "samples": args.samples, "threads": threads,
+        json.dumps({"timestamp": ts, "samples": args.samples,
+                    "hq_samples": args.hq_samples, "threads": threads,
                     "has_pil": HAS_PIL, "results": results}, indent=2))
 
     # Markdown report
@@ -214,15 +235,16 @@ def main():
         if sheet_ok:
             f.write("![Contact sheet](contact_sheet.png)\n\n")
         f.write("## Per-scene results\n\n")
-        f.write("| scene | rendered | w x h | mean_luma | sat_pct | render_ms | size_kb |\n")
-        f.write("|-------|----------|-------|-----------|---------|-----------|---------|\n")
+        f.write("| scene | rendered | w x h | mean_luma | sat_pct | render_ms | size_kb | hq |\n")
+        f.write("|-------|----------|-------|-----------|---------|-----------|---------|----|\n")
         for r in results:
             if r.get("rendered"):
+                hq = f"[{r.get('hq_samples','?')}s {r.get('hq_width','?')}x{r.get('hq_height','?')}]({r['scene']}_hq.png)" if r.get("has_hq") else "no"
                 f.write(f"| {r['scene']} | yes | {r.get('width','?')}x{r.get('height','?')} | "
                         f"{r.get('mean_luma','-')} | {r.get('sat_pct','-')} | "
-                        f"{r.get('render_ms','-')} | {r.get('size_kb','-')} |\n")
+                        f"{r.get('render_ms','-')} | {r.get('size_kb','-')} | {hq} |\n")
             else:
-                f.write(f"| {r['scene']} | no | - | - | - | - | - |\n")
+                f.write(f"| {r['scene']} | no | - | - | - | - | - | - |\n")
         f.write("\n## Acceptance flags\n\n")
         for r in results:
             flag = "Pass"
@@ -239,9 +261,12 @@ def main():
             f.write(f"- **{r['scene']}**: {flag}"
                     + (f" — {', '.join(notes)}" if notes else "") + "\n")
 
+    hq_count = sum(1 for r in results if r.get("has_hq"))
     print(f"\nWrote {sheet_path}" if sheet_ok else "\nContact sheet skipped (no PIL)")
     print(f"Wrote {out_dir / 'metrics.json'}")
     print(f"Wrote {md}")
+    if args.hq_samples > 0:
+        print(f"High-quality renders ({args.hq_samples} samples): {hq_count}/{len(results)} -> {out_dir}/*_hq.png")
 
 
 if __name__ == "__main__":
