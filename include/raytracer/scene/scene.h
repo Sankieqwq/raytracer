@@ -306,13 +306,13 @@ inline std::vector<Light> default_lights() {
     sun.type = LightType::Directional;
     sun.direction = Vec3(-1, -1.5, -1).normalized();
     sun.color = Color(1.0, 0.96, 0.9);
-    sun.intensity = 0.9;
+    sun.intensity = 0.9 * pi;
 
     Light fill;
     fill.type = LightType::Point;
     fill.position = Point3(3.0, 4.0, 5.0);
     fill.color = Color(0.8, 0.9, 1.0);
-    fill.intensity = 5.0;
+    fill.intensity = 5.0 * pi;
 
     return {sun, fill};
 }

@@ -37,7 +37,7 @@ inline bool is_shadowed(const Hittable& world, const Ray& shadow_ray, double max
     return world.hit(shadow_ray, 0.001, max_t, shadow_rec);
 }
 
-inline Color direct_delta_lights(const HitRecord& rec, const Scene& scene) {
+inline Color direct_delta_lights(const Ray& r_in, const HitRecord& rec, const Scene& scene) {
     Color base = rec.material ? rec.material->base_color(rec) : Color(0.8, 0.8, 0.8);
     Color result = base * scene.ambient_light;
 
@@ -64,7 +64,10 @@ inline Color direct_delta_lights(const HitRecord& rec, const Scene& scene) {
         Ray shadow_ray(rec.p + 0.001 * rec.normal, light_dir);
         if (is_shadowed(*scene.world, shadow_ray, max_t)) continue;
 
-        result += base * light.color * (light.intensity * attenuation * n_dot_l);
+        Ray light_ray(rec.p, light_dir);
+        Color f_val = rec.material ? rec.material->f(r_in, light_ray, rec) : Color(0, 0, 0);
+        if (f_val.length_squared() < 1e-12) continue;
+        result += f_val * light.color * (light.intensity * attenuation * n_dot_l);
     }
 
     return result;
@@ -119,7 +122,7 @@ inline Color ray_color(const Ray& r, const Scene& scene, int depth,
         return emission + attenuation * ray_color(scattered, scene, depth - 1, options, brdf_pdf, true);
     }
 
-    Color direct = direct_delta_lights(rec, scene);
+    Color direct = direct_delta_lights(r, rec, scene);
 
     if (!scene.emissive_objects.empty()) {
         double r1 = random_double(), r2 = random_double();
