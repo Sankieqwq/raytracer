@@ -35,6 +35,7 @@ struct LoadedTextureData {
 
 struct LoadedMaterialData {
     std::string name;
+    bool use_pbr = false;
     Color albedo = Color(0.7, 0.7, 0.7);
     double metallic = 0.0;
     double roughness = 0.6;

@@ -55,6 +55,21 @@ public:
     }
 };
 
+class TextureChannel : public Texture {
+public:
+    std::shared_ptr<Texture> texture;
+    int channel = 0;
+
+    TextureChannel(std::shared_ptr<Texture> texture, int channel)
+        : texture(std::move(texture)), channel(std::clamp(channel, 0, 2)) {}
+
+    Color value(double u, double v, const Point3& p) const override {
+        Color c = texture->value(u, v, p);
+        double scalar = channel == 0 ? c.x : (channel == 1 ? c.y : c.z);
+        return Color(scalar, 0, 0);
+    }
+};
+
 class ImageTexture : public Texture {
 public:
     int width = 0;

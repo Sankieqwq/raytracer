@@ -240,6 +240,99 @@ void test_loaded_material_emissive_routes_to_emissive() {
     check(mat->is_emissive(), "GLB emissiveFactor should route to Emissive material");
 }
 
+void test_loaded_glb_pbr_uses_metallic_roughness_and_normal_textures() {
+    Scene scene;
+    ObjMeshData mesh;
+    LoadedTextureData mr_texture;
+    mr_texture.path = "textures/mtl_test.ppm";
+    mesh.textures.push_back(mr_texture);
+    LoadedTextureData normal_texture;
+    normal_texture.path = "textures/mtl_test.ppm";
+    mesh.textures.push_back(normal_texture);
+
+    LoadedMaterialData data;
+    data.use_pbr = true;
+    data.albedo = Color(0.8, 0.7, 0.6);
+    data.metallic = 0.1;
+    data.roughness = 0.2;
+    data.metallic_roughness_texture = 0;
+    data.normal_texture = 1;
+
+    Material* mat = add_loaded_material(mesh, data, scene);
+    auto* pbr = dynamic_cast<PBR*>(mat);
+    check(pbr != nullptr, "GLB PBR material should route to PBR material");
+    if (pbr) {
+        HitRecord rec;
+        rec.u = 0.0;
+        rec.v = 0.0;
+        rec.p = Point3(0, 0, 0);
+        check(near(pbr->roughness->value(rec.u, rec.v, rec.p).x, 128.0 / 255.0, 1e-6),
+              "GLB metallicRoughnessTexture green channel should drive roughness");
+        check(near(pbr->metallic->value(rec.u, rec.v, rec.p).x, 192.0 / 255.0, 1e-6),
+              "GLB metallicRoughnessTexture blue channel should drive metallic");
+        check(pbr->has_normal_map, "GLB normalTexture should enable PBR normal map");
+    }
+}
+
+void test_loaded_glb_pbr_emissive_texture_preserves_surface_shading() {
+    Scene scene;
+    ObjMeshData mesh;
+    LoadedTextureData texture;
+    texture.path = "textures/mtl_test.ppm";
+    mesh.textures.push_back(texture);
+
+    LoadedMaterialData data;
+    data.use_pbr = true;
+    data.albedo = Color(0.8, 0.7, 0.6);
+    data.metallic = 0.0;
+    data.roughness = 0.5;
+    data.emissive = Color(2, 3, 4);
+    data.emissive_texture = 0;
+
+    Material* mat = add_loaded_material(mesh, data, scene);
+    auto* pbr = dynamic_cast<PBR*>(mat);
+    check(pbr != nullptr, "GLB PBR material with emissiveTexture should preserve PBR shading");
+    check(!mat->is_emissive(), "GLB PBR material with emissiveTexture should not become a pure area light");
+    if (pbr) {
+        HitRecord rec;
+        rec.u = 0.0;
+        rec.v = 0.0;
+        rec.p = Point3(0, 0, 0);
+        check(near_vec(pbr->base_color(rec), Color(0.8, 0.7, 0.6), 1e-6),
+              "GLB PBR material should keep its base color while adding emission");
+        check(near_vec(pbr->emitted(rec),
+                       Color(2 * 64.0 / 255.0, 3 * 128.0 / 255.0, 4 * 192.0 / 255.0), 1e-6),
+              "GLB emissiveTexture should modulate emissiveFactor");
+    }
+}
+
+void test_loaded_glb_volume_attenuation_reaches_dielectric() {
+    Scene scene;
+    ObjMeshData mesh;
+    LoadedMaterialData data;
+    data.transmission = 1.0;
+    data.albedo = Color(1, 1, 1);
+    data.ior = 1.4;
+    data.attenuation_color = Color(0.25, 0.5, 1.0);
+    data.attenuation_distance = 2.0;
+
+    Material* mat = add_loaded_material(mesh, data, scene);
+    auto* dielectric = dynamic_cast<Dielectric*>(mat);
+    check(dielectric != nullptr, "GLB transmission material should route to Dielectric");
+    if (dielectric) {
+        HitRecord rec;
+        rec.p = Point3(0, 0, 0);
+        rec.normal = Vec3(0, 1, 0);
+        rec.front_face = false;
+        rec.t = 2.0;
+        Color attenuation, emission;
+        Ray scattered;
+        dielectric->scatter(Ray(Point3(0, 0, 0), Vec3(0, 1, 0)), rec, attenuation, scattered, emission);
+        check(near_vec(attenuation, Color(0.25, 0.5, 1.0), 1e-6),
+              "GLB KHR_materials_volume attenuation should affect dielectric attenuation inside the medium");
+    }
+}
+
 void test_random_seed_repeats_sequence() {
     set_random_seed(1234);
     double a = random_double();
@@ -312,6 +405,9 @@ int main() {
     test_display_color_exposure_and_tone_mapping();
     test_output_format_detection();
     test_loaded_material_emissive_routes_to_emissive();
+    test_loaded_glb_pbr_uses_metallic_roughness_and_normal_textures();
+    test_loaded_glb_pbr_emissive_texture_preserves_surface_shading();
+    test_loaded_glb_volume_attenuation_reaches_dielectric();
     test_random_seed_repeats_sequence();
     test_collect_emissive_objects_uses_only_emissive_mesh_triangles();
     test_mirror_glass_water_acceptance_scene_loads();

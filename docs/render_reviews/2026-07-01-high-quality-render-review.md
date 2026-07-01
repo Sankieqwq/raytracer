@@ -14,6 +14,8 @@ Command pattern:
 
 All 13 renders were verified as valid 8-bit RGB PNG files. The full per-image metric dump is stored in `docs/render_reviews/assets/high_quality_render_metrics.json`.
 
+Post-review update: the `khronos_water_bottle` failure was traced to GLB emissive texture routing. The material now remains PBR while `emissiveTexture` contributes a separate emission term; a 64-sample smoke render confirmed that the bottle body, label, and bottom material are visible again. Transparent material noise/depth remains tracked as follow-up render quality work.
+
 ## Acceptance Summary
 
 | # | Scene | Result | Notes |

@@ -33,6 +33,10 @@ public:
     }
     virtual bool is_specular() const { return false; }
     virtual bool is_emissive() const { return false; }
+    virtual Color emitted(const HitRecord& rec) const {
+        (void)rec;
+        return Color(0, 0, 0);
+    }
 };
 
 class Lambertian : public Material {
@@ -105,6 +109,8 @@ public:
     double ior;
     Color albedo;
     std::shared_ptr<Texture> albedo_texture;
+    Color attenuation_color = Color(1, 1, 1);
+    double attenuation_distance = infinity;
 
     explicit Dielectric(double index_of_refraction, Color albedo = Color(1.0, 1.0, 1.0))
         : ior(index_of_refraction), albedo(albedo) {}
@@ -123,7 +129,7 @@ public:
                  Color& attenuation, Ray& scattered,
                  Color& emission) const override {
         emission = Color(0, 0, 0);
-        attenuation = base_color(rec);
+        attenuation = base_color(rec) * medium_attenuation(rec);
         double ratio = rec.front_face ? (1.0 / ior) : ior;
         Vec3 unit_dir = r_in.direction.normalized();
         double cos_theta = std::fmin(dot(-unit_dir, rec.normal), 1.0);
@@ -146,6 +152,17 @@ private:
         r0 = r0 * r0;
         return r0 + (1 - r0) * std::pow(1 - cosine, 5);
     }
+
+    Color medium_attenuation(const HitRecord& rec) const {
+        if (rec.front_face || attenuation_distance <= 0 || !std::isfinite(attenuation_distance)) {
+            return Color(1, 1, 1);
+        }
+        double distance = std::max(0.0, rec.t);
+        double exponent = distance / attenuation_distance;
+        return Color(std::pow(std::clamp(attenuation_color.x, 0.0, 1.0), exponent),
+                     std::pow(std::clamp(attenuation_color.y, 0.0, 1.0), exponent),
+                     std::pow(std::clamp(attenuation_color.z, 0.0, 1.0), exponent));
+    }
 };
 
 // PBR metal-roughness with Cook-Torrance BRDF (GGX + Smith + Schlick)
@@ -155,6 +172,8 @@ public:
     std::shared_ptr<Texture> metallic;
     std::shared_ptr<Texture> roughness;
     std::shared_ptr<Texture> normal;
+    Color emission = Color(0, 0, 0);
+    std::shared_ptr<Texture> emission_texture;
     bool has_normal_map = false;
 
     PBR(std::shared_ptr<Texture> albedo_tex, double metallic_val, double roughness_val)
@@ -165,6 +184,11 @@ public:
 
     Color base_color(const HitRecord& rec) const override {
         return albedo->value(rec.u, rec.v, rec.p);
+    }
+
+    Color emitted(const HitRecord& rec) const override {
+        if (!emission_texture) return emission;
+        return emission * emission_texture->value(rec.u, rec.v, rec.p);
     }
 
     bool scatter(const Ray& r_in, const HitRecord& rec,
@@ -289,12 +313,19 @@ private:
 class Emissive : public Material {
 public:
     Color emission;
+    std::shared_ptr<Texture> emission_texture;
 
     explicit Emissive(const Color& e) : emission(e) {}
+    Emissive(const Color& e, std::shared_ptr<Texture> texture)
+        : emission(e), emission_texture(std::move(texture)) {}
+
+    Color emitted(const HitRecord& rec) const override {
+        if (!emission_texture) return emission;
+        return emission * emission_texture->value(rec.u, rec.v, rec.p);
+    }
 
     Color base_color(const HitRecord& rec) const override {
-        (void)rec;
-        return emission;
+        return emitted(rec);
     }
 
     bool scatter(const Ray& r_in, const HitRecord& rec,
@@ -304,7 +335,7 @@ public:
         (void)rec;
         (void)scattered;
         (void)attenuation;
-        emission_out = emission;
+        emission_out = emitted(rec);
         return false;
     }
 

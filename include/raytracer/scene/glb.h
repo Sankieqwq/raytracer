@@ -274,7 +274,10 @@ inline LoadedTextureData glb_texture_data(const GlbContext& glb,
 
 inline LoadedMaterialData glb_material_data(const JsonValue& material) {
     LoadedMaterialData data;
+    data.use_pbr = true;
     data.albedo = Color(1.0, 1.0, 1.0);
+    data.metallic = 1.0;
+    data.roughness = 1.0;
     if (material.has("name")) data.name = material.at("name").strVal;
 
     if (material.has("pbrMetallicRoughness")) {

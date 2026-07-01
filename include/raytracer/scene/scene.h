@@ -240,31 +240,76 @@ inline Material* ensure_material(const JsonValue& obj,
     return parse_material(fallback, scene, base_dir);
 }
 
-inline std::shared_ptr<Texture> make_loaded_texture(const ObjMeshData& mesh,
-                                                    const LoadedMaterialData& data) {
-    if (data.base_color_texture >= 0 &&
-        static_cast<size_t>(data.base_color_texture) < mesh.textures.size()) {
-        const LoadedTextureData& texture = mesh.textures[data.base_color_texture];
+inline std::shared_ptr<Texture> make_loaded_texture_by_index(const ObjMeshData& mesh,
+                                                             int texture_index) {
+    if (texture_index >= 0 &&
+        static_cast<size_t>(texture_index) < mesh.textures.size()) {
+        const LoadedTextureData& texture = mesh.textures[texture_index];
         if (!texture.encoded.empty()) {
-            return std::make_shared<TintedTexture>(
-                std::make_shared<ImageTexture>(texture.encoded, texture.mime_type), data.albedo);
+            return std::make_shared<ImageTexture>(texture.encoded, texture.mime_type);
         }
         if (!texture.path.empty()) {
-            return std::make_shared<TintedTexture>(
-                std::make_shared<ImageTexture>(texture.path), data.albedo);
+            return std::make_shared<ImageTexture>(texture.path);
         }
     }
+    return make_solid_texture(Color(1, 1, 1));
+}
+
+inline std::shared_ptr<Texture> make_loaded_texture(const ObjMeshData& mesh,
+                                                    const LoadedMaterialData& data) {
+    if (data.base_color_texture >= 0) {
+        return std::make_shared<TintedTexture>(
+            make_loaded_texture_by_index(mesh, data.base_color_texture), data.albedo);
+    }
     return make_solid_texture(data.albedo);
+}
+
+inline std::shared_ptr<Texture> make_loaded_scalar_texture(const ObjMeshData& mesh,
+                                                           int texture_index,
+                                                           int channel,
+                                                           double fallback) {
+    if (texture_index >= 0 &&
+        static_cast<size_t>(texture_index) < mesh.textures.size()) {
+        return std::make_shared<TextureChannel>(
+            make_loaded_texture_by_index(mesh, texture_index), channel);
+    }
+    return make_solid_texture(Color(fallback, 0, 0));
 }
 
 inline Material* add_loaded_material(const ObjMeshData& mesh,
                                       const LoadedMaterialData& data,
                                       Scene& scene) {
     std::unique_ptr<Material> mat;
-    if (data.emissive.length_squared() > 1e-12) {
-        mat = std::make_unique<Emissive>(data.emissive);
-    } else if (data.transmission > 0.5 || data.alpha_blend) {
-        mat = std::make_unique<Dielectric>(data.ior, make_loaded_texture(mesh, data));
+    bool has_emission = data.emissive.length_squared() > 1e-12;
+    if (data.transmission > 0.5 || data.alpha_blend) {
+        auto dielectric = std::make_unique<Dielectric>(data.ior, make_loaded_texture(mesh, data));
+        dielectric->attenuation_color = data.attenuation_color;
+        dielectric->attenuation_distance = data.attenuation_distance;
+        mat = std::move(dielectric);
+    } else if (data.use_pbr) {
+        auto pbr = std::make_unique<PBR>(make_loaded_texture(mesh, data), data.metallic, data.roughness);
+        if (data.metallic_roughness_texture >= 0) {
+            pbr->roughness = make_loaded_scalar_texture(mesh, data.metallic_roughness_texture, 1, data.roughness);
+            pbr->metallic = make_loaded_scalar_texture(mesh, data.metallic_roughness_texture, 2, data.metallic);
+        }
+        if (data.normal_texture >= 0) {
+            pbr->normal = make_loaded_texture_by_index(mesh, data.normal_texture);
+            pbr->has_normal_map = true;
+        }
+        if (has_emission) {
+            pbr->emission = data.emissive;
+            if (data.emissive_texture >= 0) {
+                pbr->emission_texture = make_loaded_texture_by_index(mesh, data.emissive_texture);
+            }
+        }
+        mat = std::move(pbr);
+    } else if (has_emission) {
+        if (data.emissive_texture >= 0) {
+            mat = std::make_unique<Emissive>(
+                data.emissive, make_loaded_texture_by_index(mesh, data.emissive_texture));
+        } else {
+            mat = std::make_unique<Emissive>(data.emissive);
+        }
     } else if (data.metallic > 0.5) {
         double fuzz = std::clamp(data.roughness, 0.0, 1.0);
         mat = std::make_unique<Metal>(make_loaded_texture(mesh, data), fuzz);

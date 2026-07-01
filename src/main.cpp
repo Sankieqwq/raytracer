@@ -93,7 +93,7 @@ Color ray_color(const Ray& r, const Scene& scene, int depth,
     }
 
     if (rec.material && rec.material->is_emissive()) {
-        Emissive* em = static_cast<Emissive*>(rec.material);
+        Color emitted = rec.material->emitted(rec);
         if (prev_brdf && prev_pdf > 0 && !scene.emissive_objects.empty()) {
             double total_area = scene.emissive_total_area;
             double pdf_light = 0;
@@ -103,14 +103,15 @@ Color ray_color(const Ray& r, const Scene& scene, int depth,
                 if (cos_light > 0) pdf_light = dist2 / (cos_light * total_area);
             }
             double w_brdf = prev_pdf / (prev_pdf + pdf_light);
-            return em->emission * w_brdf;
+            return emitted * w_brdf;
         }
-        return em->emission;
+        return emitted;
     }
 
     Ray scattered;
-    Color attenuation, emission;
-    bool did_scatter = rec.material && rec.material->scatter(r, rec, attenuation, scattered, emission);
+    Color attenuation, scatter_emission;
+    bool did_scatter = rec.material && rec.material->scatter(r, rec, attenuation, scattered, scatter_emission);
+    Color emission = scatter_emission + (rec.material ? rec.material->emitted(rec) : Color(0, 0, 0));
 
     if (rec.material && rec.material->is_specular()) {
         if (options.direct_only) return emission;
