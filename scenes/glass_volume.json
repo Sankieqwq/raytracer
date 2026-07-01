@@ -4,7 +4,7 @@
         "height": 600,
         "samples": 32,
         "max_depth": 32,
-        "output": "glass_bottle.ppm",
+        "output": "glass_volume.ppm",
         "exposure": 1.5
     },
     "camera": {
@@ -17,10 +17,7 @@
     },
     "ground": {
         "enabled": true,
-        "material": {
-            "type": "lambertian",
-            "albedo": [0.5, 0.5, 0.5]
-        }
+        "material": { "type": "lambertian", "albedo": [0.5, 0.5, 0.5] }
     },
     "objects": [
         {
@@ -28,7 +25,15 @@
             "file": "../models/glb/glass.glb",
             "auto_fit": true,
             "fit_size": 3.0,
-            "fit_center": [0, 1.5, 0]
+            "fit_center": [0, 1.5, 0],
+            "override_material": true,
+            "material": {
+                "type": "dielectric",
+                "ior": 1.5,
+                "albedo": [0.95, 0.98, 0.95],
+                "attenuation_color": [0.6, 0.95, 0.65],
+                "attenuation_distance": 1.5
+            }
         }
     ]
 }

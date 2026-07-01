@@ -110,7 +110,7 @@ int main(int argc, char* argv[]) {
     RenderOutput output = render_scene(scene, render_options, callbacks);
     std::cerr << "\rProgress: 100%\n";
 
-    write_ppm(scene.output, output.width, output.height, output.pixels, output.samples);
+    write_ppm(scene.output, output.width, output.height, output.pixels, output.samples, scene.exposure);
     std::cout << "Wrote " << scene.output << "\n";
     return 0;
 }

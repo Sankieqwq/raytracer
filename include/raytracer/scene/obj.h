@@ -41,6 +41,8 @@ struct LoadedMaterialData {
     bool alpha_blend = false;       // alphaMode == "BLEND"
     double transmission = 0.0;      // KHR_materials_transmission
     double ior = 1.5;               // KHR_materials_ior (glTF default)
+    Color attenuation_color = Color(1.0, 1.0, 1.0);  // KHR_materials_volume
+    double attenuation_distance = 0.0;               // KHR_materials_volume (0 = no absorption)
 };
 
 struct ObjMeshData {
