@@ -80,7 +80,8 @@ inline Color direct_delta_lights(const Ray& r_in, const HitRecord& rec, const Sc
     for (const Light& light : scene.lights) {
         double r1 = 0.5;
         double r2 = 0.5;
-        if (light.type == LightType::Sphere || light.type == LightType::Rect) {
+        if (light.type == LightType::Sphere || light.type == LightType::Rect ||
+            light.type == LightType::Disk) {
             r1 = random_double();
             r2 = random_double();
         }
@@ -136,14 +137,25 @@ inline Color ray_color(const Ray& r, const Scene& scene, int depth,
         double alpha = std::max({bc.x, bc.y, bc.z});
         if (alpha < rec.material->alpha_cutoff()) {
             Vec3 continue_dir = r.direction.normalized();
-            return ray_color(Ray(rec.p + 0.001 * continue_dir, r.direction), scene, depth,
-                             options, prev_pdf, prev_brdf);
+            Ray continue_ray(rec.p + 0.001 * continue_dir, r.direction);
+            // Preserve the current medium so Beer-Lambert keeps accumulating
+            // across alpha-mask cutouts (e.g. a leaf inside a glass vase).
+            continue_ray.medium_color = r.medium_color;
+            continue_ray.medium_attenuation_distance = r.medium_attenuation_distance;
+            return ray_color(continue_ray, scene, depth, options, prev_pdf, prev_brdf);
         }
     }
 
     Ray scattered;
     Color attenuation, scatter_emission;
     bool did_scatter = rec.material && rec.material->scatter(r, rec, attenuation, scattered, scatter_emission);
+    // Non-transparent materials don't change the medium, so the scattered ray
+    // keeps traveling in whatever medium the incoming ray was in.  Dielectric
+    // already set the outgoing medium in scatter(); leave it untouched here.
+    if (did_scatter && rec.material && !rec.material->is_transparent()) {
+        scattered.medium_color = r.medium_color;
+        scattered.medium_attenuation_distance = r.medium_attenuation_distance;
+    }
     Color emission = scatter_emission + (rec.material ? rec.material->emitted(rec) : Color(0, 0, 0));
 
     if (rec.material && rec.material->is_specular()) {

@@ -1,0 +1,68 @@
+{
+    "image": {
+        "width": 600,
+        "height": 400,
+        "samples": 16,
+        "max_depth": 16,
+        "output": "disk_light_test.ppm",
+        "tone_map": "aces",
+        "exposure": 1.0
+    },
+    "camera": {
+        "lookfrom": [0, 1.2, 4.5],
+        "lookat": [0, 0.6, 0],
+        "vup": [0, 1, 0],
+        "vfov": 38,
+        "aperture": 0.0
+    },
+    "lighting": {
+        "ambient": [0.02, 0.02, 0.025]
+    },
+    "lights": [
+        {
+            "type": "disk",
+            "position": [1.8, 3.5, 2.5],
+            "direction": [-0.5, -1.0, -0.7],
+            "radius": 0.45,
+            "color": [1.0, 0.92, 0.82],
+            "intensity": 8.0
+        },
+        {
+            "type": "directional",
+            "direction": [-0.3, -0.8, 0.3],
+            "color": [0.6, 0.7, 1.0],
+            "intensity": 0.15
+        }
+    ],
+    "ground": {
+        "enabled": true,
+        "size": 8.0,
+        "material": { "type": "lambertian", "albedo": [0.5, 0.48, 0.44] }
+    },
+    "objects": [
+        {
+            "type": "sphere",
+            "center": [-0.6, 0.55, 0.1],
+            "radius": 0.55,
+            "material": { "type": "lambertian", "albedo": [0.72, 0.18, 0.16] }
+        },
+        {
+            "type": "sphere",
+            "center": [0.6, 0.45, -0.3],
+            "radius": 0.45,
+            "material": {
+                "type": "dielectric",
+                "ior": 1.5,
+                "albedo": [0.97, 0.99, 1.0],
+                "attenuation_color": [0.82, 0.94, 1.0],
+                "attenuation_distance": 0.8
+            }
+        },
+        {
+            "type": "sphere",
+            "center": [1.5, 0.3, 0.6],
+            "radius": 0.3,
+            "material": { "type": "metal", "albedo": [0.9, 0.9, 0.95], "fuzz": 0.08 }
+        }
+    ]
+}

@@ -546,7 +546,13 @@ void test_loaded_glb_volume_attenuation_reaches_dielectric() {
         rec.t = 2.0;
         Color attenuation, emission;
         Ray scattered;
-        dielectric->scatter(Ray(Point3(0, 0, 0), Vec3(0, 1, 0)), rec, attenuation, scattered, emission);
+        // With medium tracking, Beer-Lambert is driven by the ray's current
+        // medium, not by rec.front_face.  Simulate a ray already inside the
+        // dielectric volume by tagging the incoming ray with the medium.
+        Ray inside(Point3(0, 0, 0), Vec3(0, 1, 0));
+        inside.medium_color = Color(0.25, 0.5, 1.0);
+        inside.medium_attenuation_distance = 2.0;
+        dielectric->scatter(inside, rec, attenuation, scattered, emission);
         check(near_vec(attenuation, Color(0.25, 0.5, 1.0), 1e-6),
               "GLB KHR_materials_volume attenuation should affect dielectric attenuation inside the medium");
         check(near(dielectric->roughness, 0.42),
@@ -613,7 +619,12 @@ void test_json_dielectric_accepts_volume_attenuation() {
         rec.t = 3.0;
         Color attenuation, emission;
         Ray scattered;
-        dielectric->scatter(Ray(Point3(0, 0, 0), Vec3(0, 1, 0)), rec, attenuation, scattered, emission);
+        // Medium tracking: the incoming ray carries the dielectric's volume
+        // parameters; Beer-Lambert is evaluated against rec.t.
+        Ray inside(Point3(0, 0, 0), Vec3(0, 1, 0));
+        inside.medium_color = Color(0.4, 0.7, 1.0);
+        inside.medium_attenuation_distance = 3.0;
+        dielectric->scatter(inside, rec, attenuation, scattered, emission);
         check(near_vec(attenuation, Color(0.4, 0.7, 1.0), 1e-6),
               "JSON dielectric attenuation should tint rays exiting the medium");
         check(near(dielectric->roughness, 0.35),
@@ -800,6 +811,110 @@ void test_mirror_glass_water_acceptance_scene_loads() {
           "mirror/glass/water acceptance scene should include at least one emissive area light");
 }
 
+void test_disk_light_parses_and_samples() {
+    JsonValue light_json;
+    light_json.type = JsonValue::Object;
+    light_json.objVal["type"] = string_value("disk");
+    light_json.objVal["position"] = array3(0.0, 3.0, 0.0);
+    light_json.objVal["direction"] = array3(0.0, -1.0, 0.0);
+    light_json.objVal["radius"] = number(0.5);
+    light_json.objVal["intensity"] = number(4.0);
+
+    Light light = parse_light(light_json);
+    check(light.type == LightType::Disk, "disk light should parse to LightType::Disk");
+    check(near(light.radius, 0.5), "disk light radius should parse");
+    check(near(light.intensity, 4.0), "disk light intensity should parse");
+    double area = light.area();
+    check(near(area, pi * 0.5 * 0.5), "disk light area should be pi*r^2");
+
+    // Sampling a point on the disk should stay within the disk radius.
+    Point3 p = sample_light_point(light, 0.5, 0.0);
+    Vec3 offset = p - light.position;
+    double horiz = std::sqrt(offset.x * offset.x + offset.z * offset.z);
+    check(horiz <= light.radius + 1e-6,
+          "disk light sample point should lie within the disk radius");
+
+    // The sample from below the disk should carry radiance and be non-delta.
+    LightSample s = sample_scene_light(light, Point3(0, 0, 0), 0.5, 0.5);
+    check(!s.is_delta, "disk light should be a non-delta (area) light");
+    check(s.radiance.length_squared() > 0, "disk light should emit positive radiance");
+}
+
+void test_dielectric_medium_tracking_applies_beer_lambert_on_exit() {
+    // A ray inside a dielectric should accumulate Beer-Lambert absorption
+    // based on the path length rec.t and the ray's current medium.  When the
+    // ray refracts out, the scattered ray's medium should reset to air.
+    Dielectric glass(1.5, Color(1, 1, 1));
+    glass.attenuation_color = Color(0.5, 0.7, 1.0);
+    glass.attenuation_distance = 1.0;
+
+    HitRecord rec;
+    rec.p = Point3(0, 0, -1.0);
+    rec.normal = Vec3(0, 0, 1);   // back face: ray exits the dielectric
+    rec.front_face = false;
+    rec.t = 1.0;                  // traveled 1.0 inside the medium
+
+    Ray inside(Point3(0, 0, 0), Vec3(0, 0, -1));
+    inside.medium_color = glass.attenuation_color;
+    inside.medium_attenuation_distance = glass.attenuation_distance;
+
+    // Beer-Lambert (attenuation_color^(rec.t/attenuation_distance)) is applied
+    // before the stochastic reflect/refract choice, so it is deterministic.
+    Color attenuation, emission;
+    Ray scattered;
+    bool refracted_out = false;
+    for (int attempt = 0; attempt < 64 && !refracted_out; attempt++) {
+        glass.scatter(inside, rec, attenuation, scattered, emission);
+        // Near-normal incidence: Fresnel ~0.04, so most attempts refract.
+        refracted_out = near_vec(scattered.medium_color, Color(1, 1, 1), 1e-6);
+    }
+
+    // attenuation = base_color(1,1,1) * (0.5, 0.7, 1.0)^1 = (0.5, 0.7, 1.0).
+    check(near_vec(attenuation, Color(0.5, 0.7, 1.0), 1e-4),
+          "Beer-Lambert should apply attenuation_color^(rec.t/attenuation_distance)");
+    check(refracted_out,
+          "at near-normal incidence the dielectric should eventually refract out");
+    // After refracting out (back face), the scattered ray should be in air.
+    check(near_vec(scattered.medium_color, Color(1, 1, 1), 1e-6) &&
+          !std::isfinite(scattered.medium_attenuation_distance),
+          "refracted-out ray should reset medium to air/vacuum");
+}
+
+void test_dielectric_medium_tracking_preserves_medium_on_reflection() {
+    // A ray inside the dielectric at a grazing angle triggers total internal
+    // reflection, which deterministically reflects and should preserve the
+    // incoming medium on the scattered ray.
+    Dielectric glass(1.5, Color(1, 1, 1));
+    glass.attenuation_color = Color(0.3, 0.5, 0.9);
+    glass.attenuation_distance = 2.0;
+
+    // Grazing angle (1.2 in y, -1 in z): cos_theta ~0.64, sin_theta ~0.77,
+    // ratio*sin_theta = 1.5*0.77 > 1.0 -> total internal reflection.
+    HitRecord rec;
+    rec.p = Point3(0, 0, -1.0);
+    rec.normal = Vec3(0, 0, 1);
+    rec.front_face = false;
+    rec.t = 1.5;
+
+    Ray inside(Point3(0, 0, 0), Vec3(0, 1.2, -1).normalized());
+    inside.medium_color = glass.attenuation_color;
+    inside.medium_attenuation_distance = glass.attenuation_distance;
+
+    Color attenuation, emission;
+    Ray scattered;
+    glass.scatter(inside, rec, attenuation, scattered, emission);
+
+    // Beer-Lambert for 1.5 / 2.0 = exponent 0.75.
+    double exp_val = 1.5 / 2.0;
+    Color expected(std::pow(0.3, exp_val), std::pow(0.5, exp_val), std::pow(0.9, exp_val));
+    check(near_vec(attenuation, expected, 1e-4),
+          "Beer-Lambert should apply for TIR segments using the incoming medium");
+    // TIR reflection should preserve the incoming medium on the scattered ray.
+    check(near_vec(scattered.medium_color, inside.medium_color, 1e-6) &&
+          near(scattered.medium_attenuation_distance, inside.medium_attenuation_distance, 1e-6),
+          "reflected ray should preserve the incoming dielectric medium");
+}
+
 }  // namespace
 
 int main() {
@@ -839,6 +954,9 @@ int main() {
     test_alpha_mask_hit_traces_past_discarded_surface();
     test_alpha_masked_surfaces_do_not_cast_solid_shadows();
     test_mirror_glass_water_acceptance_scene_loads();
+    test_disk_light_parses_and_samples();
+    test_dielectric_medium_tracking_applies_beer_lambert_on_exit();
+    test_dielectric_medium_tracking_preserves_medium_on_reflection();
 
     if (failures != 0) {
         std::cerr << failures << " regression test(s) failed\n";

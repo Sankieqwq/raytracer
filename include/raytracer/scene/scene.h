@@ -30,7 +30,8 @@ enum class LightType {
     Directional,
     Spot,
     Sphere,
-    Rect
+    Rect,
+    Disk
 };
 
 struct Light {
@@ -48,6 +49,7 @@ struct Light {
     double area() const {
         if (type == LightType::Sphere) return 4.0 * pi * radius * radius;
         if (type == LightType::Rect) return cross(u, v).length();
+        if (type == LightType::Disk) return pi * radius * radius;
         return 0.0;
     }
 };
@@ -529,6 +531,13 @@ inline Light parse_light(const JsonValue& light_json) {
             light.u = width * tangent;
             light.v = height * bitangent;
         }
+    } else if (type == "disk" || type == "circle") {
+        light.type = LightType::Disk;
+        light.position = light_json.has("position") ? to_vec3(light_json.at("position")) : Point3(0, 3, 0);
+        light.direction = safe_normalized(
+            light_json.has("direction") ? to_vec3(light_json.at("direction")) : Vec3(0, -1, 0),
+            Vec3(0, -1, 0));
+        light.radius = light_json.has("radius") ? light_json.at("radius").numVal : 0.5;
     } else {
         throw std::runtime_error("Unknown light type: " + type);
     }
@@ -625,6 +634,19 @@ inline Point3 sample_light_point(const Light& light, double r1, double r2) {
     if (light.type == LightType::Rect) {
         return light.position + (r1 - 0.5) * light.u + (r2 - 0.5) * light.v;
     }
+    if (light.type == LightType::Disk) {
+        // Uniform area sampling on a disk (concentric to reduce variance).
+        double r = std::sqrt(std::clamp(r1, 0.0, 1.0));
+        double phi = 2.0 * pi * r2;
+        Vec3 local(r * std::cos(phi), r * std::sin(phi), 0.0);
+        // Build an orthonormal basis around the disk's direction, using u/v if
+        // they are valid, otherwise deriving them from direction.
+        Vec3 n = safe_normalized(light.direction, Vec3(0, -1, 0));
+        Vec3 axis = std::fabs(n.x) > 0.9 ? Vec3(0, 1, 0) : Vec3(1, 0, 0);
+        Vec3 t = cross(n, axis).normalized();
+        Vec3 b = cross(n, t);
+        return light.position + light.radius * (t * local.x + b * local.y);
+    }
     return light.position;
 }
 
@@ -678,6 +700,13 @@ inline LightSample sample_scene_light(const Light& light,
         Vec3 normal = safe_normalized(cross(light.u, light.v), -light.direction);
         double facing = dot(safe_normalized(light.direction, -normal), -s.direction);
         double cos_light = std::max(0.0, std::fabs(dot(normal, -s.direction)));
+        if (facing <= 0.0 || cos_light <= 0.0) return LightSample{};
+        attenuation *= std::max(light.area(), 1e-8) * cos_light;
+        s.is_delta = false;
+    } else if (light.type == LightType::Disk) {
+        Vec3 n = safe_normalized(light.direction, Vec3(0, -1, 0));
+        double cos_light = std::max(0.0, dot(n, -s.direction));
+        double facing = dot(safe_normalized(light.direction, -n), -s.direction);
         if (facing <= 0.0 || cos_light <= 0.0) return LightSample{};
         attenuation *= std::max(light.area(), 1e-8) * cos_light;
         s.is_delta = false;

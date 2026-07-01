@@ -12,6 +12,23 @@
 #include <memory>
 #include <utility>
 
+// Beer-Lambert volume absorption for a homogeneous participating medium.
+//   T(distance) = attenuation_color^(distance / attenuation_distance)
+// When attenuation_color = (1,1,1) or distance is zero, no absorption.  When
+// attenuation_distance is infinite (vacuum/air), T = (1,1,1).  This matches the
+// glTF KHR_materials_volume spec: sigma_t = -log(attenuation_color) / attenuation_distance.
+inline Color beer_lambert(const Color& attenuation_color,
+                         double attenuation_distance,
+                         double distance) {
+    if (attenuation_distance <= 0.0 || !std::isfinite(attenuation_distance)) {
+        return Color(1, 1, 1);
+    }
+    double exponent = std::max(0.0, distance) / attenuation_distance;
+    return Color(std::pow(std::clamp(attenuation_color.x, 0.0, 1.0), exponent),
+                std::pow(std::clamp(attenuation_color.y, 0.0, 1.0), exponent),
+                std::pow(std::clamp(attenuation_color.z, 0.0, 1.0), exponent));
+}
+
 class Material {
 public:
     virtual ~Material() = default;
@@ -156,7 +173,12 @@ public:
                  Color& attenuation, Ray& scattered,
                  Color& emission) const override {
         emission = Color(0, 0, 0);
-        attenuation = base_color(rec) * medium_attenuation(rec);
+        // Beer-Lambert for the segment the incoming ray just traveled in its
+        // current medium.  For a ray in air this is (1,1,1); for a ray that
+        // already refracted into this dielectric (or a nested one) it applies
+        // volume absorption proportional to the path length rec.t.
+        attenuation = base_color(rec) *
+                      beer_lambert(r_in.medium_color, r_in.medium_attenuation_distance, rec.t);
         double ratio = rec.front_face ? (1.0 / ior) : ior;
         Vec3 unit_dir = r_in.direction.normalized();
         double cos_theta = std::fmin(dot(-unit_dir, rec.normal), 1.0);
@@ -169,11 +191,15 @@ public:
         // transparent surfaces.
         bool cannot_refract = ratio * sin_theta > 1.0;
         double fresnel = schlick(cos_theta, ratio);
+        bool did_refract;
         Vec3 dir;
-        if (cannot_refract || fresnel + (1.0 - fresnel) * (1.0 - trans) > random_double())
+        if (cannot_refract || fresnel + (1.0 - fresnel) * (1.0 - trans) > random_double()) {
             dir = reflect(unit_dir, rec.normal);
-        else
+            did_refract = false;
+        } else {
             dir = refract(unit_dir, rec.normal, ratio);
+            did_refract = true;
+        }
 
         double rough = std::clamp(roughness, 0.0, 1.0);
         if (rough > 0.0) {
@@ -187,6 +213,25 @@ public:
         }
 
         scattered = Ray(rec.p, dir);
+        // Track the medium for Beer-Lambert along the next segment:
+        // - Refracting into the dielectric (front face hit): the scattered ray
+        //   now travels inside this medium, so tag it with our attenuation params.
+        // - Refracting out of the dielectric (back face hit): the scattered ray
+        //   exits to air/vacuum, so reset the medium to no-absorption defaults.
+        // - Reflection (TIR or Fresnel bounce): the ray stays in whatever medium
+        //   the incoming ray was in, preserving correct cumulative absorption.
+        if (did_refract) {
+            if (rec.front_face) {
+                scattered.medium_color = attenuation_color;
+                scattered.medium_attenuation_distance = attenuation_distance;
+            } else {
+                scattered.medium_color = Color(1, 1, 1);
+                scattered.medium_attenuation_distance = infinity;
+            }
+        } else {
+            scattered.medium_color = r_in.medium_color;
+            scattered.medium_attenuation_distance = r_in.medium_attenuation_distance;
+        }
         return true;
     }
 
@@ -195,17 +240,6 @@ private:
         double r0 = (1 - ref_idx) / (1 + ref_idx);
         r0 = r0 * r0;
         return r0 + (1 - r0) * std::pow(1 - cosine, 5);
-    }
-
-    Color medium_attenuation(const HitRecord& rec) const {
-        if (rec.front_face || attenuation_distance <= 0 || !std::isfinite(attenuation_distance)) {
-            return Color(1, 1, 1);
-        }
-        double distance = std::max(0.0, rec.t);
-        double exponent = distance / attenuation_distance;
-        return Color(std::pow(std::clamp(attenuation_color.x, 0.0, 1.0), exponent),
-                     std::pow(std::clamp(attenuation_color.y, 0.0, 1.0), exponent),
-                     std::pow(std::clamp(attenuation_color.z, 0.0, 1.0), exponent));
     }
 };
 
