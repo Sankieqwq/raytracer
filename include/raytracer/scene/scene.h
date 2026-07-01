@@ -409,7 +409,15 @@ inline Material* add_loaded_material(const ObjMeshData& mesh,
         auto dielectric = std::make_unique<Dielectric>(data.ior, make_loaded_texture(mesh, data));
         dielectric->attenuation_color = data.attenuation_color;
         dielectric->attenuation_distance = data.attenuation_distance;
-        dielectric->roughness = std::clamp(data.roughness, 0.0, 1.0);
+        // Only apply GLB roughness when KHR_materials_transmission is
+        // present (intentional glass material with rough transmission).
+        // For alphaMode:BLEND-only assets like glass.glb, the glTF default
+        // roughness of 1.0 would make the glass a blurry mess; keeping
+        // roughness=0 matches the expected smooth-glass appearance and the
+        // pre-transmission-rewrite baseline.
+        if (data.transmission > 0.0 || data.transmission_texture >= 0) {
+            dielectric->roughness = std::clamp(data.roughness, 0.0, 1.0);
+        }
         dielectric->transmission = std::clamp(data.transmission > 0.0 ? data.transmission : 1.0, 0.0, 1.0);
         dielectric->double_sided = data.double_sided;
         if (data.transmission_texture >= 0) {
