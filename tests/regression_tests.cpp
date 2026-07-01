@@ -165,6 +165,42 @@ void test_obj_loader_reads_mtl_diffuse_and_texture() {
     }
 }
 
+const LoadedMaterialData* find_loaded_material(const ObjMeshData& mesh, const std::string& name) {
+    for (const LoadedMaterialData& material : mesh.materials) {
+        if (material.name == name) return &material;
+    }
+    return nullptr;
+}
+
+void test_obj_loader_reads_extended_mtl_fields() {
+    ObjMeshData mesh = load_model_mesh("models/obj/mtl_extended.obj");
+    check(mesh.materials.size() == 3, "extended OBJ MTL fixture should load three materials");
+
+    const LoadedMaterialData* glow = find_loaded_material(mesh, "glow");
+    check(glow != nullptr, "extended OBJ MTL should load emissive material");
+    if (glow) {
+        check(near_vec(glow->emissive, Color(2.0, 1.0, 0.5)),
+              "OBJ MTL Ke should map to emissive color");
+        check(glow->emissive_texture >= 0,
+              "OBJ MTL map_Ke should map to emissive texture, including map options");
+    }
+
+    const LoadedMaterialData* glassy = find_loaded_material(mesh, "glassy");
+    check(glassy != nullptr, "extended OBJ MTL should load transparent material");
+    if (glassy) {
+        check(glassy->alpha_blend, "OBJ MTL d less than one should enable alpha blend");
+        check(near(glassy->alpha, 0.35), "OBJ MTL d should map to alpha");
+        check(near(glassy->ior, 1.45), "OBJ MTL Ni should map to IOR");
+    }
+
+    const LoadedMaterialData* shiny = find_loaded_material(mesh, "shiny");
+    check(shiny != nullptr, "extended OBJ MTL should load specular material");
+    if (shiny) {
+        check(shiny->metallic > 0.85, "OBJ MTL Ks should map strong specular materials toward metal");
+        check(shiny->roughness < 0.1, "OBJ MTL Ns should map high shininess to low roughness");
+    }
+}
+
 void test_obj_loader_ignores_missing_mtl_file() {
     try {
         ObjMeshData mesh = load_model_mesh("models/obj/mark.obj");
@@ -441,6 +477,7 @@ int main() {
     test_degenerate_mesh_uv_tangent_is_finite();
     test_obj_loader_handles_mixed_missing_attributes();
     test_obj_loader_reads_mtl_diffuse_and_texture();
+    test_obj_loader_reads_extended_mtl_fields();
     test_obj_loader_ignores_missing_mtl_file();
     test_triangle_mesh_exposes_internal_acceleration();
     test_pbr_exposes_brdf_and_pdf_for_direct_lighting();

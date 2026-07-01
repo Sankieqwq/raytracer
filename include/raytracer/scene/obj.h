@@ -9,6 +9,7 @@
 #include "raytracer/math/vec2.h"
 #include "raytracer/math/vec3.h"
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -136,6 +137,36 @@ inline std::filesystem::path resolve_obj_relative_path(const std::filesystem::pa
     return path.lexically_normal();
 }
 
+inline std::string read_mtl_texture_path(std::istringstream& iss) {
+    std::string token;
+    std::string texture_name;
+    while (iss >> token) {
+        texture_name = token;
+    }
+    return texture_name;
+}
+
+inline int add_mtl_texture(ObjMeshData& mesh,
+                           const std::filesystem::path& mtl_dir,
+                           const std::string& texture_name) {
+    LoadedTextureData texture;
+    texture.name = texture_name;
+    texture.path = resolve_obj_relative_path(mtl_dir, texture_name).string();
+    int texture_index = static_cast<int>(mesh.textures.size());
+    mesh.textures.push_back(texture);
+    return texture_index;
+}
+
+inline double mtl_ns_to_roughness(double ns) {
+    ns = std::max(0.0, ns);
+    return std::clamp(std::sqrt(2.0 / (ns + 2.0)), 0.02, 1.0);
+}
+
+inline void set_loaded_alpha(LoadedMaterialData& material, double alpha) {
+    material.alpha = std::clamp(alpha, 0.0, 1.0);
+    if (material.alpha < 0.999) material.alpha_blend = true;
+}
+
 inline void load_obj_mtl_file(const std::filesystem::path& obj_dir,
                               const std::string& mtl_name,
                               ObjMeshData& mesh,
@@ -172,15 +203,43 @@ inline void load_obj_mtl_file(const std::filesystem::path& obj_dir,
             if (iss >> r >> g >> b) {
                 current->albedo = Color(r, g, b);
             }
+        } else if (tag == "Ks" && current) {
+            double r, g, b;
+            if (iss >> r >> g >> b) {
+                current->metallic = std::max({current->metallic, r, g, b});
+            }
+        } else if (tag == "Ns" && current) {
+            double ns;
+            if (iss >> ns) current->roughness = mtl_ns_to_roughness(ns);
+        } else if (tag == "Ni" && current) {
+            double ni;
+            if (iss >> ni && ni > 0) current->ior = ni;
+        } else if (tag == "d" && current) {
+            double alpha;
+            if (iss >> alpha) set_loaded_alpha(*current, alpha);
+        } else if (tag == "Tr" && current) {
+            double transparency;
+            if (iss >> transparency) set_loaded_alpha(*current, 1.0 - transparency);
+        } else if (tag == "Ke" && current) {
+            double r, g, b;
+            if (iss >> r >> g >> b) {
+                current->emissive = Color(r, g, b);
+            }
         } else if (tag == "map_Kd" && current) {
-            std::string texture_name;
-            iss >> texture_name;
+            std::string texture_name = read_mtl_texture_path(iss);
             if (!texture_name.empty()) {
-                LoadedTextureData texture;
-                texture.name = texture_name;
-                texture.path = resolve_obj_relative_path(mtl_dir, texture_name).string();
-                current->base_color_texture = static_cast<int>(mesh.textures.size());
-                mesh.textures.push_back(texture);
+                current->base_color_texture = add_mtl_texture(mesh, mtl_dir, texture_name);
+            }
+        } else if (tag == "map_Ke" && current) {
+            std::string texture_name = read_mtl_texture_path(iss);
+            if (!texture_name.empty()) {
+                current->emissive_texture = add_mtl_texture(mesh, mtl_dir, texture_name);
+            }
+        } else if ((tag == "map_Bump" || tag == "bump" || tag == "norm" || tag == "map_Kn") && current) {
+            std::string texture_name = read_mtl_texture_path(iss);
+            if (!texture_name.empty()) {
+                current->normal_texture = add_mtl_texture(mesh, mtl_dir, texture_name);
+                current->use_pbr = true;
             }
         }
     }
