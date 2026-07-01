@@ -21,7 +21,7 @@
             "type": "directional",
             "direction": [0, 0, -1],
             "color": [1, 1, 1],
-            "intensity": 1.0
+            "intensity": 3.14159
         }
     ],
     "objects": [

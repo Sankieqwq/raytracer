@@ -90,6 +90,15 @@ inline void write_ppm(const std::string& path, int w, int h,
     }
 }
 
+inline void write_ppm(const std::string& path, int w, int h,
+                      const std::vector<Color>& pixels,
+                      int samples_per_pixel,
+                      double exposure) {
+    ImageOutputOptions options;
+    options.exposure = exposure;
+    write_ppm(path, w, h, pixels, samples_per_pixel, options);
+}
+
 inline void write_png(const std::string& path, int w, int h,
                       const std::vector<Color>& pixels,
                       int samples_per_pixel,

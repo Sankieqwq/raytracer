@@ -1,15 +1,23 @@
 # Build
 build/
-./raytracer
 
 # Render output
 *.ppm
 *.png
 !tests/golden/images/*.png
 !textures/mtl_test.ppm
+*.log
+*.rgba32f
+
+# Local debug/cache output
+debug/
 
 # executable
 /raytracer
+/raytracer_blender_bridge
+/raytracer_server
+__pycache__/
+*.pyc
 
 reports/
 

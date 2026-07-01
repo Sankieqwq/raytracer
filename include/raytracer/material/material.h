@@ -169,7 +169,6 @@ public:
         // transparent surfaces.
         bool cannot_refract = ratio * sin_theta > 1.0;
         double fresnel = schlick(cos_theta, ratio);
-        double refract_prob = (1.0 - fresnel) * trans;
         Vec3 dir;
         if (cannot_refract || fresnel + (1.0 - fresnel) * (1.0 - trans) > random_double())
             dir = reflect(unit_dir, rec.normal);

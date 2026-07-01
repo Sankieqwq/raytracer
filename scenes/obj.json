@@ -14,13 +14,13 @@
             "type": "directional",
             "direction": [-1, -1.5, -1],
             "color": [1.0, 0.96, 0.9],
-            "intensity": 0.9
+            "intensity": 2.827
         },
         {
             "type": "point",
             "position": [3, 4, 5],
             "color": [0.8, 0.9, 1.0],
-            "intensity": 5.0
+            "intensity": 15.708
         }
     ],
     "ground": {

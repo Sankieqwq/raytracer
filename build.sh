@@ -10,3 +10,11 @@ CXXFLAGS="${CXXFLAGS:--std=c++17 -O2 -Wall -Wextra}"
 echo "Building raytracer with $CXX"
 "$CXX" $CXXFLAGS -Iinclude -Ithird_party -o raytracer src/main.cpp
 echo "Wrote ./raytracer"
+
+echo "Building raytracer_blender_bridge with $CXX"
+"$CXX" $CXXFLAGS -Iinclude -Ithird_party -o raytracer_blender_bridge src/blender_bridge.cpp
+echo "Wrote ./raytracer_blender_bridge"
+
+echo "Building raytracer_server with $CXX"
+"$CXX" $CXXFLAGS -Iinclude -Ithird_party -o raytracer_server src/remote_server.cpp
+echo "Wrote ./raytracer_server"
